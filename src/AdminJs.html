@@ -1,0 +1,445 @@
+<script>
+/* ============================================================
+   AdminJs — แดชบอร์ด, ผลการประเมิน, คลังข้อมูล, ประวัติการใช้งาน
+   ============================================================ */
+
+const Admin = { charts: [], filters: {}, cache: {} };
+
+Admin.destroyCharts = function () {
+  Admin.charts.forEach(function (c) { try { c.destroy(); } catch (e) { /* ทำลายไปแล้ว */ } });
+  Admin.charts = [];
+};
+
+Admin.chartFont = function () {
+  return { family: 'Sarabun', size: 11 };
+};
+
+Admin.textColor = function () {
+  return getComputedStyle(document.documentElement).getPropertyValue('--text-2').trim() || '#475569';
+};
+
+/* ==================== แดชบอร์ด ==================== */
+
+App.pages.dashboard = async function (container) {
+  Admin.destroyCharts();
+  const f = Admin.filters.dashboard || {};
+  const data = await api('apiAdminOverview', App.session.token, f.year || '', f.semester || '');
+  Admin.cache.overview = data;
+  App.setTermBadge(data.currentTerm.year, data.currentTerm.semester);
+
+  const s = data.stats;
+  const yearOptions = optionsHtml(['all'].concat(data.filters.years), data.filters.year,
+    function (y) { return { value: y, label: y === 'all' ? 'ทุกปีการศึกษา' : 'ปีการศึกษา ' + y }; });
+  const semesterOptions = optionsHtml(['all'].concat(data.filters.semesters), data.filters.semester,
+    function (x) { return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; });
+
+  container.innerHTML =
+    '<div class="filters">' +
+      '<div class="field"><label>ปีการศึกษา</label><select id="dashYear">' + yearOptions + '</select></div>' +
+      '<div class="field"><label>ภาคเรียน</label><select id="dashSemester">' + semesterOptions + '</select></div>' +
+      '<button class="btn btn--soft" id="btnDashFilter">🔍 แสดงผล</button>' +
+      '<div class="spacer" style="flex:1"></div>' +
+      '<button class="btn btn--ghost" onclick="App.go(\'export\')">📤 ไปหน้าส่งออกรายงาน</button>' +
+    '</div>' +
+
+    '<div class="grid grid-4" style="margin-bottom:18px">' +
+      '<div class="stat"><div class="label">การประเมินทั้งหมด</div><div class="value">' + s.totalEvaluations + '</div>' +
+        '<div class="hint">รายการ</div></div>' +
+      '<div class="stat c2"><div class="label">ครูที่ถูกประเมินแล้ว</div><div class="value">' + s.teachersEvaluated +
+        '</div><div class="hint">จากทั้งหมด ' + s.teachersTotal + ' คน</div></div>' +
+      '<div class="stat c3"><div class="label">คะแนนเฉลี่ยรวม</div><div class="value">' + num(s.averageScore) +
+        '</div><div class="hint">เต็ม 5.00</div></div>' +
+      '<div class="stat c4"><div class="label">ระดับดีเยี่ยม</div><div class="value">' + s.excellent +
+        '</div><div class="hint">คน · ต้องปรับปรุง ' + s.needImprove + ' คน</div></div>' +
+    '</div>' +
+
+    '<div class="grid grid-2">' +
+      '<div class="card"><div class="card__head"><h3>📊 การกระจายระดับผลการประเมิน</h3></div>' +
+        '<div class="chart-box"><canvas id="chartRating"></canvas></div></div>' +
+      '<div class="card"><div class="card__head"><h3>📈 คะแนนเฉลี่ยตามระดับชั้น</h3></div>' +
+        '<div class="chart-box"><canvas id="chartLevel"></canvas></div></div>' +
+      '<div class="card"><div class="card__head"><h3>📅 คะแนนเฉลี่ยตามเวรประจำวัน</h3></div>' +
+        '<div class="chart-box"><canvas id="chartDay"></canvas></div></div>' +
+      '<div class="card"><div class="card__head"><h3>👥 จำนวนการประเมินตามบทบาทผู้ประเมิน</h3></div>' +
+        '<div class="chart-box"><canvas id="chartRole"></canvas></div></div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>🚦 ความคืบหน้าของผู้ประเมิน</h3>' +
+      '<div class="spacer"></div><span class="small muted">ภาคเรียนที่ ' +
+      esc(data.currentTerm.semester + '/' + data.currentTerm.year) + '</span></div>' +
+      (data.progress.length ? '<div class="table-wrap scroll-y"><table><thead><tr>' +
+        '<th>ผู้ประเมิน</th><th>บทบาท</th><th class="num">ประเมินแล้ว</th><th style="width:180px">ความคืบหน้า</th>' +
+        '</tr></thead><tbody>' +
+        data.progress.map(function (p) {
+          return '<tr><td>' + esc(p.name) + '</td>' +
+            '<td class="small">' + esc(p.role) + (p.scope ? ' · ' + esc(p.scope) : '') + '</td>' +
+            '<td class="num">' + p.done + ' / ' + p.total + '</td>' +
+            '<td><div class="progress"><div style="width:' + p.percent + '%"></div></div>' +
+            '<span class="small muted">' + p.percent + '%</span></td></tr>';
+        }).join('') + '</tbody></table></div>' : emptyState('👥', 'ยังไม่มีผู้ประเมินในระบบ')) +
+    '</div>' +
+
+    '<div class="grid grid-2">' +
+      '<div class="card"><div class="card__head"><h3>🏆 อันดับคะแนนสูงสุด</h3></div>' +
+        Admin.rankTable(data.topTeachers) + '</div>' +
+      '<div class="card"><div class="card__head"><h3>📌 ควรได้รับการพัฒนา</h3></div>' +
+        Admin.rankTable(data.lowTeachers) + '</div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>🕘 กิจกรรมล่าสุด</h3>' +
+      '<div class="spacer"></div><button class="btn btn--ghost btn--sm" onclick="App.go(\'logs\')">ดูทั้งหมด</button></div>' +
+      (data.recentLogs.length ? '<div class="table-wrap"><table><tbody>' +
+        data.recentLogs.map(function (l) {
+          return '<tr><td class="small muted" style="width:150px">' + esc(l.time) + '</td>' +
+            '<td style="width:160px">' + esc(l.user) + '</td>' +
+            '<td><b>' + esc(l.action) + '</b> <span class="small muted">' + esc(l.detail) + '</span></td></tr>';
+        }).join('') + '</tbody></table></div>' : emptyState('🕘', 'ยังไม่มีกิจกรรม')) +
+    '</div>';
+
+  $('btnDashFilter').onclick = function () {
+    Admin.filters.dashboard = { year: $('dashYear').value, semester: $('dashSemester').value };
+    App.go('dashboard');
+  };
+
+  Admin.drawDashboardCharts(data);
+};
+
+Admin.rankTable = function (rows) {
+  if (!rows || !rows.length) return emptyState('📭', 'ยังไม่มีข้อมูล');
+  return '<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>ชื่อ-นามสกุล</th>' +
+    '<th>ระดับชั้น</th><th class="num">เฉลี่ย</th><th>ระดับ</th></tr></thead><tbody>' +
+    rows.map(function (t, i) {
+      return '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(t.name) + '</td>' +
+        '<td>' + esc(t.level || '-') + '</td><td class="num"><b>' + num(t.average) + '</b></td>' +
+        '<td><span class="badge ' + ratingClass(t.rating) + '">' + esc(t.rating) + '</span></td></tr>';
+    }).join('') + '</tbody></table></div>';
+};
+
+Admin.drawDashboardCharts = function (data) {
+  if (typeof Chart === 'undefined') return;
+  const font = Admin.chartFont();
+  const color = Admin.textColor();
+  const common = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'bottom', labels: { font: font, color: color, boxWidth: 12 } } }
+  };
+
+  const ratingLabels = Object.keys(data.ratingDistribution);
+  Admin.charts.push(new Chart($('chartRating'), {
+    type: 'doughnut',
+    data: {
+      labels: ratingLabels,
+      datasets: [{ data: ratingLabels.map(function (k) { return data.ratingDistribution[k]; }),
+        backgroundColor: ['#16a34a', '#65a30d', '#eab308', '#f97316', '#dc2626'], borderWidth: 0 }]
+    },
+    options: common
+  }));
+
+  const levels = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
+  Admin.charts.push(new Chart($('chartLevel'), {
+    type: 'bar',
+    data: {
+      labels: levels,
+      datasets: [{ label: 'คะแนนเฉลี่ย', data: levels.map(function (l) { return data.byLevel[l] || 0; }),
+        backgroundColor: '#4f46e5', borderRadius: 6 }]
+    },
+    options: Object.assign({}, common, {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, max: 5, ticks: { font: font, color: color } }, x: { ticks: { font: font, color: color } } }
+    })
+  }));
+
+  const days = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'];
+  Admin.charts.push(new Chart($('chartDay'), {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [{ label: 'คะแนนเฉลี่ย', data: days.map(function (d) { return data.byDay[d] || 0; }),
+        backgroundColor: '#0d9488', borderRadius: 6 }]
+    },
+    options: Object.assign({}, common, {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, max: 5, ticks: { font: font, color: color } }, x: { ticks: { font: font, color: color } } }
+    })
+  }));
+
+  const roles = Object.keys(data.byRole);
+  Admin.charts.push(new Chart($('chartRole'), {
+    type: 'pie',
+    data: {
+      labels: roles.map(function (r) { return r.length > 22 ? r.substring(0, 22) + '…' : r; }),
+      datasets: [{ data: roles.map(function (r) { return data.byRole[r]; }),
+        backgroundColor: ['#4f46e5', '#0d9488', '#f59e0b', '#ec4899', '#6366f1'], borderWidth: 0 }]
+    },
+    options: common
+  }));
+};
+
+/* ==================== ผลการประเมิน ==================== */
+
+App.pages.results = async function (container) {
+  const f = Admin.filters.results || {};
+  const data = await api('apiListResults', App.session.token, f);
+  const years = (Admin.cache.overview && Admin.cache.overview.filters.years) || [];
+
+  container.innerHTML =
+    '<div class="card">' +
+      '<div class="filters">' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="rYear">' +
+          optionsHtml(['all'].concat(years), f.year || 'all', function (y) {
+            return { value: y, label: y === 'all' ? 'ทุกปี' : y }; }) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="rSemester">' +
+          optionsHtml(['all', '1', '2'], f.semester || 'all', function (x) {
+            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+        '<div class="field"><label>ระดับชั้น</label><select id="rLevel">' +
+          optionsHtml(['all', 'ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'], f.level || 'all', function (x) {
+            return { value: x, label: x === 'all' ? 'ทุกระดับชั้น' : x }; }) + '</select></div>' +
+        '<div class="field"><label>เวรประจำวัน</label><select id="rDay">' +
+          optionsHtml(['all', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'], f.day || 'all', function (x) {
+            return { value: x, label: x === 'all' ? 'ทุกวัน' : 'วัน' + x }; }) + '</select></div>' +
+        '<div class="field" style="flex:1;min-width:200px"><label>ค้นหา</label>' +
+          '<input type="text" id="rKeyword" placeholder="🔍 ชื่อครู หรือ ชื่อผู้ประเมิน" value="' + esc(f.keyword || '') + '"></div>' +
+        '<button class="btn" id="btnSearchResults">ค้นหา</button>' +
+        '<button class="btn btn--ghost" id="btnClearResults">ล้าง</button>' +
+      '</div>' +
+      '<div class="card__head"><h3>📋 ผลการประเมิน</h3><div class="spacer"></div>' +
+        '<span class="badge badge--brand">' + data.total + ' รายการ</span></div>' +
+      (data.rows.length ? '<div class="table-wrap"><table><thead><tr>' +
+        '<th class="num">#</th><th>บันทึกเมื่อ</th><th>ภาคเรียน</th><th>ครู</th><th>ผู้ประเมิน</th>' +
+        '<th>บทบาท</th><th class="num">เฉลี่ย</th><th>ระดับ</th><th></th></tr></thead><tbody>' +
+        data.rows.map(function (r, i) {
+          return '<tr><td class="num">' + (i + 1) + '</td>' +
+            '<td class="small muted">' + esc(r.savedAt) + '</td>' +
+            '<td>' + esc(r.semester + '/' + r.year) + '</td>' +
+            '<td><b>' + esc(r.teacher) + '</b>' + (r.revision ? ' <span class="badge badge--muted">แก้ไข ' + r.revision + '</span>' : '') + '</td>' +
+            '<td>' + esc(r.evaluator) + '</td>' +
+            '<td class="small">' + esc(r.role) + '</td>' +
+            '<td class="num"><b>' + num(r.average) + '</b></td>' +
+            '<td><span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span></td>' +
+            '<td><div class="btn-row">' +
+              '<button class="btn btn--ghost btn--sm" onclick="Admin.viewResult(\'' + jsAttr(r.id) + '\')">ดู</button>' +
+              '<button class="btn btn--danger btn--sm" onclick="Admin.deleteResult(\'' + jsAttr(r.id) + '\',\'' + jsAttr(r.teacher) + '\')">ลบ</button>' +
+            '</div></td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        (data.total > data.rows.length ? '<p class="small muted" style="margin-top:10px">แสดง ' +
+          data.rows.length + ' จาก ' + data.total + ' รายการ — กรุณาใช้ตัวกรองเพื่อดูข้อมูลที่ต้องการ</p>' : '')
+        : emptyState('🔍', 'ไม่พบผลการประเมินตามเงื่อนไขที่เลือก')) +
+    '</div>';
+
+  $('btnSearchResults').onclick = function () {
+    Admin.filters.results = {
+      year: $('rYear').value, semester: $('rSemester').value, level: $('rLevel').value,
+      day: $('rDay').value, keyword: $('rKeyword').value.trim()
+    };
+    App.go('results');
+  };
+  $('btnClearResults').onclick = function () { Admin.filters.results = {}; App.go('results'); };
+  $('rKeyword').onkeypress = function (e) { if (e.key === 'Enter') $('btnSearchResults').click(); };
+};
+
+Admin.viewResult = async function (id) {
+  try {
+    const d = await api('apiGetResult', App.session.token, id);
+    modal({
+      wide: true,
+      title: '📋 ' + d.teacher + ' — ภาคเรียนที่ ' + d.semester + '/' + d.year,
+      body:
+        '<div class="grid grid-4" style="margin-bottom:16px">' +
+          '<div class="stat"><div class="label">ผู้ประเมิน</div><div style="font-weight:700">' + esc(d.evaluator) + '</div>' +
+            '<div class="hint">' + esc(d.role) + '</div></div>' +
+          '<div class="stat c2"><div class="label">คะแนนรวม</div><div class="value">' + d.total + '</div>' +
+            '<div class="hint">เต็ม ' + d.max + '</div></div>' +
+          '<div class="stat c3"><div class="label">คะแนนเฉลี่ย</div><div class="value">' + num(d.average) + '</div></div>' +
+          '<div class="stat c4"><div class="label">ระดับ</div><div style="margin-top:6px">' +
+            '<span class="badge ' + ratingClass(d.rating) + '">' + esc(d.rating) + '</span></div>' +
+            '<div class="hint">' + esc(d.savedAt) + '</div></div>' +
+        '</div>' +
+        '<div class="table-wrap"><table><thead><tr><th>เกณฑ์การประเมิน</th><th class="num">คะแนน</th></tr></thead><tbody>' +
+        d.scores.map(function (s) {
+          return '<tr><td>' + esc(s.id + '. ' + s.name) + '</td><td class="num"><b>' +
+            (s.score === null ? '-' : s.score) + '</b></td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        (d.comment ? '<div class="alert alert--info" style="margin-top:14px"><span>💬</span><span>' + esc(d.comment) + '</span></div>' : '') +
+        (d.history && d.history.length ? '<h4 style="margin:18px 0 8px;font-size:14px">🗄️ ประวัติฉบับก่อนหน้า</h4>' +
+          '<div class="table-wrap"><table><thead><tr><th>จัดเก็บเมื่อ</th><th>ประเภท</th>' +
+          '<th class="num">เฉลี่ยเดิม</th><th>ระดับเดิม</th><th>โดย</th></tr></thead><tbody>' +
+          d.history.map(function (h) {
+            return '<tr><td class="small">' + esc(h.archivedAt) + '</td><td>' + esc(h.type) + '</td>' +
+              '<td class="num">' + num(h.average) + '</td>' +
+              '<td><span class="badge ' + ratingClass(h.rating) + '">' + esc(h.rating) + '</span></td>' +
+              '<td class="small">' + esc(h.archivedBy) + '</td></tr>';
+          }).join('') + '</tbody></table></div>' : ''),
+      footer: '<button class="btn btn--ghost" data-close>ปิด</button>'
+    });
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+Admin.deleteResult = async function (id, teacherName) {
+  const yes = await confirmDialog({
+    title: '🗑️ ลบผลการประเมิน',
+    message: 'ต้องการลบผลการประเมินของ "' + teacherName + '" ใช่หรือไม่?',
+    warning: 'ระบบจะย้ายข้อมูลเข้าคลังข้อมูลย้อนหลัง (ไม่ได้ลบถาวร) และกู้คืนได้ภายหลัง',
+    confirmText: 'ลบรายการนี้', danger: true
+  });
+  if (!yes) return;
+  try {
+    const res = await rpc('apiDeleteResult', App.session.token, id, 'ลบจากหน้าผลการประเมิน');
+    if (!res.success) throw new Error(res.message);
+    toast(res.message, 'ok');
+    App.go('results');
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+/* ==================== คลังข้อมูลย้อนหลัง ==================== */
+
+App.pages.archive = async function (container) {
+  const f = Admin.filters.archive || {};
+  const data = await api('apiListArchive', App.session.token, f);
+
+  container.innerHTML =
+    '<div class="alert alert--info"><span>🗄️</span><span>' +
+      'คลังข้อมูลเก็บผลการประเมินที่ถูกแก้ไข ลบ หรือปิดภาคเรียนไปแล้ว ' +
+      '<b>ข้อมูลไม่ถูกลบถาวร</b> จึงตรวจสอบย้อนหลังและกู้คืนได้เสมอ</span></div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>📦 ปิดภาคเรียนและจัดเก็บข้อมูล</h3></div>' +
+      '<p class="card__desc">ย้ายผลการประเมินของภาคเรียนที่เลือกเข้าคลัง เพื่อเริ่มภาคเรียนใหม่ด้วยตารางที่สะอาด ' +
+        'โดยยังนำข้อมูลเดิมมาออกรายงานได้</p>' +
+      '<div class="filters" style="margin-bottom:0">' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="arcYear">' +
+          optionsHtml(data.years, f.year || data.years[0]) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="arcSemester">' +
+          optionsHtml(data.semesters, f.semester || '1', function (x) {
+            return { value: x, label: 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+        '<div class="field" style="flex:1;min-width:200px"><label>หมายเหตุ</label>' +
+          '<input type="text" id="arcNote" placeholder="เช่น ปิดภาคเรียนที่ 1/2568"></div>' +
+        '<button class="btn btn--warn" id="btnArchiveTerm">📦 จัดเก็บภาคเรียนนี้</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="filters">' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="aYear">' +
+          optionsHtml(['all'].concat(data.years), f.year || 'all', function (y) {
+            return { value: y, label: y === 'all' ? 'ทุกปี' : y }; }) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="aSemester">' +
+          optionsHtml(['all'].concat(data.semesters), f.semester || 'all', function (x) {
+            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+        '<div class="field"><label>ประเภทการจัดเก็บ</label><select id="aType">' +
+          optionsHtml(['all'].concat(data.types), f.type || 'all', function (t) {
+            return { value: t, label: t === 'all' ? 'ทุกประเภท' : t }; }) + '</select></div>' +
+        '<div class="field" style="flex:1;min-width:180px"><label>ค้นหา</label>' +
+          '<input type="text" id="aKeyword" placeholder="🔍 ชื่อครู/ผู้ประเมิน" value="' + esc(f.keyword || '') + '"></div>' +
+        '<button class="btn" id="btnSearchArchive">ค้นหา</button>' +
+      '</div>' +
+      '<div class="card__head"><h3>🗄️ รายการในคลังข้อมูล</h3><div class="spacer"></div>' +
+        '<span class="badge badge--brand">' + data.total + ' รายการ</span>' +
+        '<button class="btn btn--ok btn--sm" id="btnRestore" disabled>↩️ กู้คืนที่เลือก</button></div>' +
+      (data.rows.length ? '<div class="table-wrap"><table><thead><tr>' +
+        '<th style="width:36px"><input type="checkbox" id="arcAll"></th>' +
+        '<th>จัดเก็บเมื่อ</th><th>ประเภท</th><th>ภาคเรียน</th><th>ครู</th><th>ผู้ประเมิน</th>' +
+        '<th class="num">เฉลี่ย</th><th>ระดับ</th><th>หมายเหตุ</th></tr></thead><tbody>' +
+        data.rows.map(function (r) {
+          return '<tr><td><input type="checkbox" class="arc-check" value="' + esc(r.batchId) + '"></td>' +
+            '<td class="small muted">' + esc(r.archivedAt) + '</td>' +
+            '<td><span class="badge badge--muted">' + esc(r.type) + '</span></td>' +
+            '<td>' + esc(r.semester + '/' + r.year) + '</td>' +
+            '<td><b>' + esc(r.teacher) + '</b></td><td>' + esc(r.evaluator) + '</td>' +
+            '<td class="num">' + num(r.average) + '</td>' +
+            '<td><span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span></td>' +
+            '<td class="small muted">' + esc(r.note) + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+        : emptyState('🗄️', 'ยังไม่มีข้อมูลในคลัง', 'ข้อมูลจะถูกเก็บที่นี่เมื่อมีการแก้ไข ลบ หรือปิดภาคเรียน')) +
+    '</div>';
+
+  $('btnSearchArchive').onclick = function () {
+    Admin.filters.archive = {
+      year: $('aYear').value, semester: $('aSemester').value,
+      type: $('aType').value, keyword: $('aKeyword').value.trim()
+    };
+    App.go('archive');
+  };
+
+  $('btnArchiveTerm').onclick = async function () {
+    const year = $('arcYear').value, semester = $('arcSemester').value;
+    const yes = await confirmDialog({
+      title: '📦 จัดเก็บภาคเรียน',
+      message: 'ต้องการย้ายผลการประเมินของภาคเรียนที่ ' + semester + '/' + year + ' เข้าคลังข้อมูลใช่หรือไม่?',
+      warning: 'ผลการประเมินจะถูกย้ายออกจากตารางหลัก แต่ยังค้นย้อนหลัง ออกรายงาน และกู้คืนได้',
+      confirmText: 'จัดเก็บ'
+    });
+    if (!yes) return;
+    try {
+      const res = await rpc('apiArchiveTerm', App.session.token, year, semester, $('arcNote').value.trim());
+      if (!res.success) throw new Error(res.message);
+      toast(res.message, 'ok');
+      App.go('archive');
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  };
+
+  if (data.rows.length) {
+    const checks = function () { return Array.prototype.slice.call(document.querySelectorAll('.arc-check')); };
+    const refresh = function () {
+      $('btnRestore').disabled = !checks().some(function (c) { return c.checked; });
+    };
+    $('arcAll').onchange = function () {
+      checks().forEach(function (c) { c.checked = $('arcAll').checked; });
+      refresh();
+    };
+    checks().forEach(function (c) { c.onchange = refresh; });
+
+    $('btnRestore').onclick = async function () {
+      const ids = checks().filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      const yes = await confirmDialog({
+        title: '↩️ กู้คืนข้อมูล',
+        message: 'ต้องการกู้คืน ' + ids.length + ' รายการกลับสู่ตารางผลการประเมินใช่หรือไม่?',
+        confirmText: 'กู้คืน'
+      });
+      if (!yes) return;
+      try {
+        const res = await rpc('apiRestoreArchive', App.session.token, ids);
+        if (!res.success) throw new Error(res.message);
+        toast(res.message, 'ok');
+        App.go('archive');
+      } catch (err) {
+        toast(err.message, 'danger');
+      }
+    };
+  }
+};
+
+/* ==================== ประวัติการใช้งาน ==================== */
+
+App.pages.logs = async function (container) {
+  const rows = await api('apiListLogs', App.session.token, 300);
+  container.innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>🕘 ประวัติการใช้งานระบบ</h3><div class="spacer"></div>' +
+        '<input type="text" id="logSearch" placeholder="🔍 กรองข้อความ" style="max-width:240px">' +
+        '<span class="badge badge--brand">' + rows.length + ' รายการล่าสุด</span></div>' +
+      '<p class="card__desc">ระบบบันทึกทุกการเข้าสู่ระบบ การแก้ไขข้อมูล และการส่งออกรายงาน เพื่อการตรวจสอบย้อนหลัง</p>' +
+      '<div class="table-wrap scroll-y" style="max-height:600px"><table><thead><tr>' +
+        '<th>วันที่-เวลา</th><th>ผู้ใช้</th><th>บทบาท</th><th>การกระทำ</th><th>รายละเอียด</th><th>บัญชี Google</th>' +
+        '</tr></thead><tbody id="logBody">' +
+        rows.map(function (l) {
+          return '<tr><td class="small muted" style="white-space:nowrap">' + esc(l.time) + '</td>' +
+            '<td>' + esc(l.user) + '</td><td class="small">' + esc(l.role) + '</td>' +
+            '<td><b>' + esc(l.action) + '</b></td><td class="small">' + esc(l.detail) + '</td>' +
+            '<td class="small muted">' + esc(l.account) + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+    '</div>';
+
+  $('logSearch').oninput = debounce(function () {
+    const k = this.value.toLowerCase();
+    Array.prototype.slice.call(document.querySelectorAll('#logBody tr')).forEach(function (tr) {
+      tr.style.display = tr.textContent.toLowerCase().indexOf(k) !== -1 ? '' : 'none';
+    });
+  }, 200);
+};
+</script>

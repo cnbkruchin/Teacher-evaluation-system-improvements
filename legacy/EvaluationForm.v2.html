@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Sarabun', sans-serif; background: #f5f7fa; min-height: 100vh; padding: 20px; color: #333; }
+
+    .container { background: #fff; border-radius: 16px; padding: 30px; max-width: 800px; margin: 0 auto; box-shadow: 0 10px 40px rgba(0,0,0,0.08); }
+
+    .header { text-align: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 3px solid #2e7d32; }
+    .header h1 { font-size: 20px; color: #1b5e20; }
+    .header p { color: #666; font-size: 13px; margin-top: 4px; }
+
+    .evaluator-badge { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 10px 20px; border-radius: 30px; margin-bottom: 20px; font-size: 13px; font-weight: 600; color: #2e7d32; }
+
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: 600; margin-bottom: 5px; color: #1b5e20; font-size: 13px; }
+    select, textarea { width: 100%; padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: 'Sarabun', sans-serif; font-size: 14px; transition: border-color 0.3s; }
+    select:focus, textarea:focus { outline: none; border-color: #2e7d32; box-shadow: 0 0 0 3px rgba(46,125,50,0.1); }
+
+    .criteria-section { background: #fafffe; border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid #e8f5e9; }
+    .criteria-title { font-size: 16px; font-weight: 700; color: #1b5e20; margin-bottom: 12px; }
+
+    .rating-legend { display: flex; justify-content: center; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+    .rating-legend span { font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: 600; }
+    .rating-legend .r5 { background: #c8e6c9; color: #2e7d32; }
+    .rating-legend .r4 { background: #dcedc8; color: #558b2f; }
+    .rating-legend .r3 { background: #fff9c4; color: #f57f17; }
+    .rating-legend .r2 { background: #ffe0b2; color: #e65100; }
+    .rating-legend .r1 { background: #ffcdd2; color: #c62828; }
+
+    .criteria-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 15px; margin-bottom: 8px; background: #fff; border-radius: 8px; border: 1px solid #e8f5e9; transition: all 0.2s; }
+    .criteria-item:hover { border-color: #81c784; box-shadow: 0 2px 8px rgba(46,125,50,0.08); }
+    .criteria-item .name { flex: 1; font-size: 13px; font-weight: 500; }
+    .criteria-item .num { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #2e7d32; color: #fff; border-radius: 50%; font-size: 11px; margin-right: 10px; flex-shrink: 0; }
+
+    .rating-group { display: flex; gap: 4px; flex-shrink: 0; }
+    .rating-group input[type="radio"] { display: none; }
+    .rating-group label { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 36px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; color: #999; transition: all 0.2s; margin: 0; }
+    .rating-group input[type="radio"]:checked + label { border-color: #2e7d32; background: #2e7d32; color: #fff; transform: scale(1.05); }
+    .rating-group label:hover { border-color: #81c784; color: #2e7d32; }
+
+    .teacher-info { background: #fff3e0; border-radius: 8px; padding: 10px 15px; margin-top: 8px; font-size: 13px; display: none; border-left: 4px solid #ff9800; }
+    .teacher-info.show { display: block; }
+
+    .btn { padding: 12px 30px; border: none; border-radius: 10px; font-family: 'Sarabun', sans-serif; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
+    .btn-submit { background: linear-gradient(135deg, #2e7d32, #388e3c); color: #fff; width: 100%; margin-top: 10px; }
+    .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(46,125,50,0.3); }
+    .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .loading { display: none; text-align: center; padding: 15px; color: #2e7d32; font-size: 14px; }
+    .loading.show { display: block; }
+
+    .success-panel { display: none; text-align: center; padding: 30px; background: #e8f5e9; border-radius: 12px; margin-top: 20px; }
+    .success-panel.show { display: block; }
+    .success-panel h3 { color: #2e7d32; font-size: 20px; margin-bottom: 10px; }
+    .success-panel .icon-big { font-size: 48px; margin-bottom: 10px; }
+
+    .btn-next { display: inline-block; padding: 10px 25px; background: #2e7d32; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-family: 'Sarabun', sans-serif; font-size: 14px; font-weight: 600; margin: 5px; }
+    .btn-close { display: inline-block; padding: 10px 25px; background: #78909c; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-family: 'Sarabun', sans-serif; font-size: 14px; font-weight: 600; margin: 5px; }
+
+    .session-expired { text-align: center; padding: 40px; }
+    .session-expired h2 { color: #c62828; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Session Expired -->
+    <div id="sessionExpired" class="session-expired" style="display:none;">
+      <h2>⛔ กรุณาเข้าสู่ระบบก่อน</h2>
+      <p>Session หมดอายุ หรือยังไม่ได้เข้าสู่ระบบ</p>
+      <br>
+      <button class="btn-close" onclick="google.script.host.close()">ปิด</button>
+    </div>
+
+    <!-- Main Form -->
+    <div id="mainContent" style="display:none;">
+      <div class="header">
+        <h1>📝 แบบประเมินผลการปฏิบัติงานครู</h1>
+        <p>ส่วนงานกิจการนักเรียน</p>
+      </div>
+
+      <div style="text-align:center;">
+        <div class="evaluator-badge">
+          <span>👤</span>
+          <span id="evalBadgeName">-</span>
+          <span>|</span>
+          <span id="evalBadgeRole">-</span>
+        </div>
+      </div>
+
+      <div id="formSection">
+        <div class="form-group">
+          <label>📅 ภาคเรียน</label>
+          <select id="semester" onchange="checkReady()">
+            <option value="">-- เลือกภาคเรียน --</option>
+            <option value="1/2568">ภาคเรียนที่ 1/2568</option>
+            <option value="2/2568">ภาคเรียนที่ 2/2568</option>
+            <option value="1/2569">ภาคเรียนที่ 1/2569</option>
+            <option value="2/2569">ภาคเรียนที่ 2/2569</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>🧑‍🏫 ครูผู้รับการประเมิน</label>
+          <select id="teacher" onchange="onTeacherChange()">
+            <option value="">-- กำลังโหลด... --</option>
+          </select>
+        </div>
+
+        <div id="teacherInfo" class="teacher-info"></div>
+
+        <div id="criteriaSection" class="criteria-section" style="display:none;">
+          <div class="criteria-title">📋 เกณฑ์การประเมิน</div>
+          <div class="rating-legend">
+            <span class="r5">5 = ดีเยี่ยม</span>
+            <span class="r4">4 = ดีมาก</span>
+            <span class="r3">3 = ดี</span>
+            <span class="r2">2 = พอใช้</span>
+            <span class="r1">1 = ปรับปรุง</span>
+          </div>
+          <div id="criteriaList"></div>
+        </div>
+
+        <div class="form-group" id="commentSection" style="display:none;">
+          <label>💬 ข้อเสนอแนะ / หมายเหตุ</label>
+          <textarea id="comment" rows="3" placeholder="กรอกข้อเสนอแนะเพิ่มเติม (ถ้ามี)"></textarea>
+        </div>
+
+        <button class="btn btn-submit" id="submitBtn" onclick="submitForm()" disabled>
+          ✅ บันทึกผลการประเมิน
+        </button>
+      </div>
+
+      <div class="loading" id="loading">⏳ กำลังบันทึกข้อมูล...</div>
+
+      <div class="success-panel" id="successPanel">
+        <div class="icon-big">✅</div>
+        <h3>บันทึกเรียบร้อย!</h3>
+        <p id="successDetail"></p>
+        <br>
+        <button class="btn-next" onclick="resetForm()">📝 ประเมินคนถัดไป</button>
+        <button class="btn-close" onclick="google.script.host.close()">✖️ ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var sessionData = null;
+    var currentTeachers = [];
+    var currentCriteria = [];
+
+    // ตรวจสอบ session
+    google.script.run
+      .withSuccessHandler(function(session) {
+        if (!session) {
+          document.getElementById('sessionExpired').style.display = 'block';
+          return;
+        }
+        sessionData = session;
+        document.getElementById('mainContent').style.display = 'block';
+        document.getElementById('evalBadgeName').textContent = session.name;
+        document.getElementById('evalBadgeRole').textContent = session.role + (session.scope ? ' - ' + session.scope : '');
+
+        // โหลดครู
+        google.script.run.withSuccessHandler(function(teachers) {
+          currentTeachers = teachers;
+          var sel = document.getElementById('teacher');
+          sel.innerHTML = '<option value="">-- เลือกครู (' + teachers.length + ' คน) --</option>';
+          teachers.forEach(function(t, i) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = t.name + ' (' + t.level + ' | เวร: ' + t.dutyDay + ')';
+            sel.appendChild(opt);
+          });
+        }).getTeachersForEvaluator(session.name, session.role, session.scope);
+
+        // โหลดเกณฑ์
+        google.script.run.withSuccessHandler(function(criteria) {
+          currentCriteria = criteria;
+          renderCriteria(criteria);
+        }).getCriteriaForRole(session.role);
+      })
+      .getLoggedInEvaluator();
+
+    function onTeacherChange() {
+      var idx = document.getElementById('teacher').value;
+      if (idx === '') {
+        document.getElementById('teacherInfo').classList.remove('show');
+        checkReady();
+        return;
+      }
+      var t = currentTeachers[idx];
+      document.getElementById('teacherInfo').classList.add('show');
+      document.getElementById('teacherInfo').innerHTML =
+        '🧑‍🏫 <strong>' + t.name + '</strong> | ระดับชั้น: ' + t.level + ' | เวรประจำวัน: ' + t.dutyDay;
+      checkReady();
+    }
+
+    function renderCriteria(criteria) {
+      var container = document.getElementById('criteriaList');
+      container.innerHTML = '';
+      criteria.forEach(function(c) {
+        var div = document.createElement('div');
+        div.className = 'criteria-item';
+        var rHTML = '<div class="rating-group">';
+        for (var s = 1; s <= 5; s++) {
+          rHTML += '<input type="radio" name="score_' + c.id + '" id="score_' + c.id + '_' + s + '" value="' + s + '" onchange="checkReady()">';
+          rHTML += '<label for="score_' + c.id + '_' + s + '">' + s + '</label>';
+        }
+        rHTML += '</div>';
+        div.innerHTML = '<div class="name"><span class="num">' + c.id + '</span>' + c.name + '</div>' + rHTML;
+        container.appendChild(div);
+      });
+      document.getElementById('criteriaSection').style.display = 'block';
+      document.getElementById('commentSection').style.display = 'block';
+    }
+
+    function checkReady() {
+      var semester = document.getElementById('semester').value;
+      var teacher = document.getElementById('teacher').value;
+      var allScored = true;
+      currentCriteria.forEach(function(c) {
+        if (!document.querySelector('input[name="score_' + c.id + '"]:checked')) allScored = false;
+      });
+      document.getElementById('submitBtn').disabled = !(semester && teacher !== '' && allScored);
+    }
+
+    function submitForm() {
+      var tidx = document.getElementById('teacher').value;
+      var teacher = currentTeachers[tidx];
+      var scores = {};
+      currentCriteria.forEach(function(c) {
+        var checked = document.querySelector('input[name="score_' + c.id + '"]:checked');
+        scores[c.id] = checked ? parseInt(checked.value) : '';
+      });
+
+      var formData = {
+        evaluatorName: sessionData.name,
+        evaluatorRole: sessionData.role,
+        semester: document.getElementById('semester').value,
+        teacherName: teacher.name,
+        teacherLevel: teacher.level,
+        teacherDutyDay: teacher.dutyDay,
+        scores: scores,
+        comment: document.getElementById('comment').value
+      };
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('loading').classList.add('show');
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          document.getElementById('loading').classList.remove('show');
+          if (result.success) {
+            document.getElementById('formSection').style.display = 'none';
+            document.getElementById('successPanel').classList.add('show');
+            document.getElementById('successDetail').textContent =
+              'ประเมิน: ' + teacher.name + '\nโดย: ' + sessionData.name;
+          } else {
+            alert('❌ ' + result.message);
+            document.getElementById('submitBtn').disabled = false;
+          }
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('loading').classList.remove('show');
+          alert('❌ เกิดข้อผิดพลาด: ' + err.message);
+          document.getElementById('submitBtn').disabled = false;
+        })
+        .submitEvaluation(formData);
+    }
+
+    function resetForm() {
+      document.getElementById('formSection').style.display = 'block';
+      document.getElementById('successPanel').classList.remove('show');
+      document.getElementById('teacher').value = '';
+      document.getElementById('teacherInfo').classList.remove('show');
+      document.getElementById('comment').value = '';
+      currentCriteria.forEach(function(c) {
+        document.querySelectorAll('input[name="score_' + c.id + '"]').forEach(function(r) { r.checked = false; });
+      });
+      document.getElementById('submitBtn').disabled = true;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<script>
+/* ============================================================
+   EvaluatorJs — หน้าจอสำหรับผู้ประเมิน
+   ============================================================ */
+
+const Evaluator = { ctx: null, editingId: null };
+
+/* ---------- แบบประเมิน ---------- */
+
+App.pages.evaluate = async function (container) {
+  const token = App.session.token;
+  const ctx = await api('apiEvaluatorContext', token, Evaluator.year || '', Evaluator.semester || '');
+  Evaluator.ctx = ctx;
+  Evaluator.year = ctx.year;
+  Evaluator.semester = ctx.semester;
+  App.setTermBadge(ctx.year, ctx.semester);
+
+  const doneCount = Object.keys(ctx.completed).length;
+  const percent = ctx.teachers.length ? Math.round(doneCount / ctx.teachers.length * 100) : 0;
+
+  container.innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>👤 ' + esc(ctx.evaluator.name) + '</h3>' +
+        '<span class="badge badge--brand">' + esc(ctx.evaluator.role) +
+        (ctx.evaluator.scope ? ' · ' + esc(ctx.evaluator.scope) : '') + '</span>' +
+        '<div class="spacer"></div>' +
+        '<span class="small muted">ประเมินแล้ว ' + doneCount + ' / ' + ctx.teachers.length + ' คน</span>' +
+      '</div>' +
+      '<div class="progress"><div style="width:' + percent + '%"></div></div>' +
+      '<div class="filters" style="margin-top:16px;margin-bottom:0">' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="evYear">' +
+          optionsHtml(ctx.years, ctx.year) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="evSemester">' +
+          optionsHtml(ctx.semesters, ctx.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) +
+        '</select></div>' +
+        '<button class="btn btn--soft" id="btnChangeTerm">เปลี่ยนภาคเรียน</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>🧑‍🏫 เลือกครูผู้รับการประเมิน</h3></div>' +
+      (ctx.teachers.length ? (
+        '<div class="field"><input type="text" id="teacherSearch" placeholder="🔍 พิมพ์เพื่อค้นหาชื่อครู..."></div>' +
+        '<div class="field"><select id="teacherSelect" size="1"></select></div>' +
+        '<div id="teacherInfo"></div>'
+      ) : emptyState('👻', 'ยังไม่มีครูที่ท่านมีสิทธิ์ประเมินในภาคเรียนนี้',
+          ctx.evaluator.role === 'หัวหน้าเวรประจำวัน'
+            ? 'กรุณาให้ผู้ดูแลระบบตรวจสอบตารางเวรประจำวันของภาคเรียนนี้'
+            : 'กรุณาติดต่อผู้ดูแลระบบเพื่อตรวจสอบข้อมูล')) +
+    '</div>' +
+
+    '<div id="formArea"></div>';
+
+  if (!ctx.teachers.length) return;
+
+  $('btnChangeTerm').onclick = function () {
+    Evaluator.year = $('evYear').value;
+    Evaluator.semester = $('evSemester').value;
+    App.go('evaluate');
+  };
+
+  const renderTeacherOptions = function (keyword) {
+    const k = (keyword || '').toLowerCase();
+    const list = ctx.teachers.filter(function (t) { return !k || t.name.toLowerCase().indexOf(k) !== -1; });
+    $('teacherSelect').innerHTML = '<option value="">-- เลือกครู (' + list.length + ' คน) --</option>' +
+      list.map(function (t) {
+        const done = ctx.completed[t.id] || ctx.completed[t.name];
+        return '<option value="' + esc(t.id) + '">' + (done ? '✅ ' : '') + esc(t.name) +
+          ' — ' + esc(t.level || 'ไม่ระบุระดับชั้น') + ' | เวร' + esc(t.dutyDay || 'ไม่ระบุ') + '</option>';
+      }).join('');
+  };
+  renderTeacherOptions('');
+
+  $('teacherSearch').oninput = debounce(function () { renderTeacherOptions(this.value); }, 200);
+  $('teacherSelect').onchange = function () { Evaluator.selectTeacher(this.value); };
+};
+
+Evaluator.selectTeacher = function (teacherId) {
+  const ctx = Evaluator.ctx;
+  const info = $('teacherInfo');
+  const formArea = $('formArea');
+  if (!teacherId) { info.innerHTML = ''; formArea.innerHTML = ''; return; }
+
+  const teacher = ctx.teachers.filter(function (t) { return t.id === teacherId; })[0];
+  if (!teacher) return;
+  const done = ctx.completed[teacher.id] || ctx.completed[teacher.name];
+
+  info.innerHTML =
+    '<div class="alert alert--info"><span>🧑‍🏫</span><span>' +
+      '<b>' + esc(teacher.name) + '</b><br>' +
+      'ระดับชั้นที่ปรึกษา: ' + esc(teacher.level || '-') +
+      ' · เวรประจำวัน: <b>' + esc(teacher.dutyDay || 'ไม่ระบุ') + '</b>' +
+      (teacher.dutyPosition ? ' (' + esc(teacher.dutyPosition) + ')' : '') +
+      (teacher.dutyLocation ? '<br>จุดปฏิบัติหน้าที่: ' + esc(teacher.dutyLocation) : '') +
+      (teacher.dutyTime ? ' · เวลา ' + esc(teacher.dutyTime) : '') +
+      (teacher.dutyFromRoster ? '' : '<br><span class="small">⚠️ ยังไม่มีข้อมูลเวรของภาคเรียนนี้ (ใช้ค่าเริ่มต้นจากทะเบียนครู)</span>') +
+    '</span></div>' +
+    (done ? '<div class="alert alert--warn"><span>📌</span><span>ท่านเคยประเมินครูท่านนี้แล้วเมื่อ ' +
+      esc(done.savedAt) + ' (เฉลี่ย ' + num(done.average) + ' — ' + esc(done.rating) + ')<br>' +
+      (ctx.allowReevaluate ? 'การบันทึกใหม่จะแทนที่ผลเดิม โดยระบบเก็บฉบับเดิมไว้ในคลังข้อมูล'
+        : 'ระบบไม่อนุญาตให้แก้ไขผลการประเมินซ้ำ') + '</span></div>' : '');
+
+  if (done && !ctx.allowReevaluate) { formArea.innerHTML = ''; return; }
+  Evaluator.renderForm(teacher, done);
+};
+
+Evaluator.renderForm = function (teacher, existing) {
+  const ctx = Evaluator.ctx;
+  const legend = ctx.scoreMeaning.map(function (s, i) {
+    const cls = ['r-excellent', 'r-great', 'r-good', 'r-fair', 'r-improve'][i];
+    return '<span class="' + cls + '">' + s.score + ' = ' + esc(s.label) + '</span>';
+  }).join('');
+
+  $('formArea').innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>📋 เกณฑ์การประเมิน (' + ctx.criteria.length + ' ข้อ)</h3>' +
+        '<div class="spacer"></div><span class="badge badge--muted" id="scoreProgress">0 / ' + ctx.criteria.length + '</span></div>' +
+      '<div class="legend">' + legend + '</div>' +
+      '<div class="btn-row" style="margin-bottom:14px">' +
+        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(5)">ให้ 5 ทุกข้อ</button>' +
+        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(4)">ให้ 4 ทุกข้อ</button>' +
+        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(3)">ให้ 3 ทุกข้อ</button>' +
+        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.clearScores()">ล้างคะแนน</button>' +
+      '</div>' +
+      '<div id="criteriaList">' +
+        ctx.criteria.map(function (c) {
+          return '<div class="criteria-item" data-cid="' + c.id + '">' +
+            '<div class="no">' + c.id + '</div>' +
+            '<div class="txt">' + esc(c.name) +
+              (c.description ? '<div class="small muted">' + esc(c.description) + '</div>' : '') + '</div>' +
+            '<div class="rate">' + [1, 2, 3, 4, 5].map(function (s) {
+              return '<input type="radio" name="sc_' + c.id + '" id="sc_' + c.id + '_' + s + '" value="' + s +
+                '" onchange="Evaluator.updateProgress()"><label for="sc_' + c.id + '_' + s + '">' + s + '</label>';
+            }).join('') + '</div></div>';
+        }).join('') +
+      '</div>' +
+      '<div class="field" style="margin-top:16px">' +
+        '<label>💬 ข้อเสนอแนะ / จุดเด่น / สิ่งที่ควรพัฒนา</label>' +
+        '<textarea id="comment" rows="3" maxlength="1000" placeholder="ระบุข้อเสนอแนะเพิ่มเติม (ถ้ามี)"></textarea>' +
+        '<div class="hint">ไม่เกิน 1,000 ตัวอักษร</div>' +
+      '</div>' +
+      '<button class="btn btn--lg btn--block" id="btnSubmitEval" disabled>✅ บันทึกผลการประเมิน</button>' +
+    '</div>';
+
+  // ถ้าเคยประเมินไว้แล้ว ให้ดึงคะแนนเดิมมาแสดงเพื่อแก้ไข
+  if (existing && existing.id) {
+    api('apiGetMyEvaluation', App.session.token, existing.id).then(function (data) {
+      Object.keys(data.scores).forEach(function (cid) {
+        const input = document.getElementById('sc_' + cid + '_' + data.scores[cid]);
+        if (input) input.checked = true;
+      });
+      if ($('comment')) $('comment').value = data.comment || '';
+      Evaluator.updateProgress();
+    }).catch(function () { /* ไม่มีข้อมูลเดิมก็เริ่มกรอกใหม่ได้ */ });
+  }
+
+  $('btnSubmitEval').onclick = function () { Evaluator.submit(teacher, this); };
+  Evaluator.updateProgress();
+};
+
+Evaluator.fillAll = function (score) {
+  Evaluator.ctx.criteria.forEach(function (c) {
+    const input = document.getElementById('sc_' + c.id + '_' + score);
+    if (input) input.checked = true;
+  });
+  Evaluator.updateProgress();
+};
+
+Evaluator.clearScores = function () {
+  document.querySelectorAll('#criteriaList input[type=radio]').forEach(function (r) { r.checked = false; });
+  Evaluator.updateProgress();
+};
+
+Evaluator.updateProgress = function () {
+  const criteria = Evaluator.ctx.criteria;
+  let done = 0;
+  criteria.forEach(function (c) {
+    const checked = document.querySelector('input[name="sc_' + c.id + '"]:checked');
+    const item = document.querySelector('.criteria-item[data-cid="' + c.id + '"]');
+    if (item) item.classList.toggle('done', !!checked);
+    if (checked) done++;
+  });
+  const badge = $('scoreProgress');
+  if (badge) {
+    badge.textContent = done + ' / ' + criteria.length;
+    badge.className = 'badge ' + (done === criteria.length ? 'badge--ok' : 'badge--muted');
+  }
+  const btn = $('btnSubmitEval');
+  if (btn) btn.disabled = done !== criteria.length;
+};
+
+Evaluator.submit = async function (teacher, button) {
+  const scores = {};
+  Evaluator.ctx.criteria.forEach(function (c) {
+    const checked = document.querySelector('input[name="sc_' + c.id + '"]:checked');
+    if (checked) scores[c.id] = parseInt(checked.value, 10);
+  });
+
+  try {
+    const res = await apiWithButton(button, 'apiSubmitEvaluation', App.session.token, {
+      year: Evaluator.year,
+      semester: Evaluator.semester,
+      teacherId: teacher.id,
+      scores: scores,
+      comment: $('comment').value
+    });
+    toast('บันทึกผลการประเมิน ' + res.teacher + ' เรียบร้อย (เฉลี่ย ' + num(res.average) + ' — ' + res.rating + ')', 'ok');
+    App.go('evaluate');
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+/* ---------- ผลที่ฉันประเมินแล้ว ---------- */
+
+App.pages.myHistory = async function (container) {
+  const rows = await api('apiMyEvaluations', App.session.token, '', '');
+  container.innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>📋 ผลการประเมินที่ฉันบันทึกไว้</h3>' +
+        '<div class="spacer"></div><span class="badge badge--brand">' + rows.length + ' รายการ</span></div>' +
+      (rows.length ? '<div class="table-wrap"><table><thead><tr>' +
+        '<th class="num">#</th><th>ภาคเรียน</th><th>ครู</th><th>ระดับชั้น</th><th>เวร</th>' +
+        '<th class="num">เฉลี่ย</th><th>ระดับ</th><th>บันทึกเมื่อ</th><th></th></tr></thead><tbody>' +
+        rows.map(function (r, i) {
+          return '<tr><td class="num">' + (i + 1) + '</td>' +
+            '<td>' + esc(r.semester + '/' + r.year) + '</td>' +
+            '<td><b>' + esc(r.teacher) + '</b>' + (r.revision ? ' <span class="badge badge--muted">แก้ไข ' + r.revision + ' ครั้ง</span>' : '') + '</td>' +
+            '<td>' + esc(r.level || '-') + '</td><td>' + esc(r.dutyDay || '-') + '</td>' +
+            '<td class="num"><b>' + num(r.average) + '</b></td>' +
+            '<td><span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span></td>' +
+            '<td class="small muted">' + esc(r.savedAt) + '</td>' +
+            '<td><button class="btn btn--ghost btn--sm" onclick="Evaluator.viewDetail(\'' + jsAttr(r.id) + '\')">ดู</button></td></tr>';
+        }).join('') + '</tbody></table></div>'
+        : emptyState('📭', 'ยังไม่มีผลการประเมินที่บันทึกไว้', 'เริ่มต้นได้ที่เมนู "แบบประเมิน"')) +
+    '</div>';
+};
+
+Evaluator.viewDetail = async function (id) {
+  try {
+    const data = await api('apiGetMyEvaluation', App.session.token, id);
+    const criteria = (Evaluator.ctx && Evaluator.ctx.criteria) || [];
+    const rows = criteria.length ? criteria : Object.keys(data.scores).map(function (cid) {
+      return { id: Number(cid), name: 'ข้อ ' + cid };
+    });
+    modal({
+      title: '📋 ผลการประเมิน: ' + data.teacher,
+      body: '<p class="small muted" style="margin-bottom:12px">ภาคเรียนที่ ' + esc(data.semester + '/' + data.year) +
+        (data.revision ? ' · แก้ไขแล้ว ' + data.revision + ' ครั้ง' : '') + '</p>' +
+        '<div class="table-wrap"><table><thead><tr><th>เกณฑ์</th><th class="num">คะแนน</th></tr></thead><tbody>' +
+        rows.map(function (c) {
+          const score = data.scores[c.id];
+          return '<tr><td>' + esc(c.id + '. ' + c.name) + '</td><td class="num"><b>' +
+            (score === undefined ? '-' : score) + '</b></td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        (data.comment ? '<div class="alert alert--info" style="margin-top:14px"><span>💬</span><span>' +
+          esc(data.comment) + '</span></div>' : ''),
+      footer: '<button class="btn btn--ghost" data-close>ปิด</button>'
+    });
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+/* ---------- ตารางเวรประจำวัน ---------- */
+
+App.pages.myDuty = async function (container) {
+  const ctx = Evaluator.ctx || await api('apiEvaluatorContext', App.session.token, '', '');
+  Evaluator.ctx = ctx;
+  const rows = await api('apiEvaluatorDutyView', App.session.token, ctx.year, ctx.semester);
+
+  const byDay = {};
+  rows.forEach(function (r) { (byDay[r.day] = byDay[r.day] || []).push(r); });
+
+  container.innerHTML =
+    '<div class="card"><div class="card__head">' +
+      '<h3>📅 ตารางเวรประจำวัน — ภาคเรียนที่ ' + esc(ctx.semester + '/' + ctx.year) + '</h3>' +
+      '<div class="spacer"></div><span class="badge badge--brand">' + rows.length + ' รายการ</span></div>' +
+      '<p class="card__desc">ตารางเวรของแต่ละภาคเรียนแยกจากกัน — ข้อมูลนี้คือของภาคเรียนที่แสดงด้านบนเท่านั้น</p>' +
+      (rows.length ? Object.keys(byDay).map(function (day) {
+        return '<h4 style="margin:16px 0 8px;font-size:14px">🗓️ วัน' + esc(day) + ' (' + byDay[day].length + ' คน)</h4>' +
+          '<div class="table-wrap"><table><thead><tr><th>ชื่อ-นามสกุล</th><th>บทบาทในเวร</th>' +
+          '<th>จุดปฏิบัติหน้าที่</th><th>เวลา</th><th>ระดับชั้นที่ดูแล</th></tr></thead><tbody>' +
+          byDay[day].map(function (r) {
+            return '<tr><td>' + esc(r.teacherName) + '</td><td>' + esc(r.position || '-') + '</td>' +
+              '<td>' + esc(r.location || '-') + '</td>' +
+              '<td>' + esc(r.startTime && r.endTime ? r.startTime + ' - ' + r.endTime : '-') + '</td>' +
+              '<td>' + esc(r.level || '-') + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+      }).join('') : emptyState('📭', 'ยังไม่มีตารางเวรของภาคเรียนนี้', 'กรุณาติดต่อผู้ดูแลระบบ')) +
+    '</div>';
+};
+
+/* ---------- เปลี่ยนรหัสผ่าน ---------- */
+
+App.pages.myPassword = async function (container) {
+  container.innerHTML =
+    '<div class="card content-narrow">' +
+      '<div class="card__head"><h3>🔑 เปลี่ยนรหัสผ่านของฉัน</h3></div>' +
+      (App.session.mustChangePassword ? '<div class="alert alert--warn"><span>⚠️</span>' +
+        '<span>ท่านยังใช้รหัสผ่านที่ผู้ดูแลระบบออกให้ กรุณาตั้งรหัสผ่านใหม่ที่มีเพียงท่านเท่านั้นที่ทราบ</span></div>' : '') +
+      '<div class="field"><label>รหัสผ่านเดิม</label><input type="password" id="oldPass" autocomplete="current-password"></div>' +
+      '<div class="field"><label>รหัสผ่านใหม่</label>' +
+        '<input type="password" id="newPass" autocomplete="new-password" oninput="App.showStrength(this.value,\'pwStrength\')">' +
+        '<div class="strength"><div id="pwStrength"></div></div>' +
+        '<div class="hint">อย่างน้อย 8 ตัวอักษร ประกอบด้วยตัวอักษรและตัวเลข</div></div>' +
+      '<div class="field"><label>ยืนยันรหัสผ่านใหม่</label><input type="password" id="confirmPass" autocomplete="new-password"></div>' +
+      '<button class="btn btn--block" id="btnChangePw">💾 บันทึกรหัสผ่านใหม่</button>' +
+    '</div>';
+
+  $('btnChangePw').onclick = async function () {
+    const oldPass = $('oldPass').value, newPass = $('newPass').value, confirmPass = $('confirmPass').value;
+    if (!oldPass || !newPass) { toast('กรุณากรอกข้อมูลให้ครบ', 'warn'); return; }
+    if (newPass !== confirmPass) { toast('รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน', 'warn'); return; }
+    try {
+      await apiWithButton(this, 'apiEvaluatorChangePassword', App.session.token, oldPass, newPass);
+      App.session.mustChangePassword = false;
+      toast('เปลี่ยนรหัสผ่านเรียบร้อย', 'ok');
+      App.go('evaluate');
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  };
+};
+</script>

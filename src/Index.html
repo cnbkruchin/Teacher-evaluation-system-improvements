@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="light">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ระบบประเมินผลการปฏิบัติงานครู</title>
+  <?!= include('Styles') ?>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ==================== หน้าเข้าสู่ระบบ ==================== -->
+  <div id="loginView" class="login-wrap">
+    <div>
+      <div class="login-card">
+        <div class="login-card__head">
+          <div class="mark">🏫</div>
+          <h1 id="loginTitle">ระบบประเมินผลการปฏิบัติงานครู</h1>
+          <p id="loginSubtitle">กลุ่มบริหารงานกิจการนักเรียน</p>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" id="tabEvaluator" onclick="App.switchLoginTab('evaluator')">📝 ผู้ประเมิน</button>
+          <button class="tab" id="tabAdmin" onclick="App.switchLoginTab('admin')">🛡️ ผู้ดูแลระบบ</button>
+        </div>
+
+        <div class="login-card__body">
+          <div id="loginAlert"></div>
+
+          <!-- ผู้ประเมิน -->
+          <form id="formEvaluator" onsubmit="App.loginEvaluator(event)">
+            <div class="field">
+              <label for="evalName">👤 ชื่อ-นามสกุลผู้ประเมิน</label>
+              <select id="evalName"><option value="">-- กำลังโหลดรายชื่อ --</option></select>
+              <input type="text" id="evalNameText" class="hidden" placeholder="พิมพ์ชื่อ-นามสกุลของท่าน" autocomplete="username">
+            </div>
+            <div class="field">
+              <label for="evalPass">🔑 รหัสผ่าน</label>
+              <input type="password" id="evalPass" placeholder="รหัสผ่านที่ได้รับจากผู้ดูแลระบบ" autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn--lg btn--block" id="btnEvaluatorLogin">เข้าสู่ระบบ</button>
+          </form>
+
+          <!-- ผู้ดูแลระบบ -->
+          <form id="formAdmin" class="hidden" onsubmit="App.loginAdmin(event)">
+            <div class="field">
+              <label for="adminPass">🔑 รหัสผ่านผู้ดูแลระบบ</label>
+              <input type="password" id="adminPass" placeholder="กรอกรหัสผ่าน" autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn--lg btn--block" id="btnAdminLogin">เข้าสู่ระบบ</button>
+            <div style="text-align:center;margin-top:14px;">
+              <button type="button" class="linkish" onclick="App.openRecovery()">ลืมรหัสผ่าน?</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="login-foot">
+          <span id="loginVersion">กำลังเชื่อมต่อระบบ...</span>
+          &nbsp;·&nbsp;
+          <button class="linkish" onclick="App.toggleTheme()">🌓 สลับโหมดสี</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== หน้าจอหลัก ==================== -->
+  <div id="shell" class="app hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__brand">
+        <div class="logo">
+          <div class="logo-mark">🏫</div>
+          <div>
+            <h1>ระบบประเมินผลครู</h1>
+            <p id="sideRole">—</p>
+          </div>
+        </div>
+      </div>
+      <nav class="sidebar__nav" id="sideNav"></nav>
+      <div class="sidebar__foot">
+        <div id="sideUser">—</div>
+        <div id="sideVersion" class="small"></div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="btn btn--ghost btn--sm menu-toggle" onclick="App.toggleSidebar()">☰</button>
+        <h2 id="pageTitle">แดชบอร์ด</h2>
+        <div class="spacer"></div>
+        <span class="badge badge--brand" id="termBadge"></span>
+        <button class="btn btn--ghost btn--sm" onclick="App.toggleTheme()" title="สลับโหมดสี">🌓</button>
+        <button class="btn btn--ghost btn--sm" onclick="App.logout()">🚪 ออกจากระบบ</button>
+      </header>
+      <main class="content" id="pageContent"></main>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+  <div id="modalHost"></div>
+
+  <?!= include('AppJs') ?>
+  <?!= include('AdminJs') ?>
+  <?!= include('AdminDataJs') ?>
+  <?!= include('AdminExportJs') ?>
+  <?!= include('EvaluatorJs') ?>
+</body>
+</html>

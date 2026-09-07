@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Sarabun', sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .login-card { background: #fff; border-radius: 16px; padding: 35px; width: 100%; max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.08); text-align: center; }
+    .icon { font-size: 48px; margin-bottom: 10px; }
+    h2 { color: #1a237e; font-size: 20px; margin-bottom: 5px; }
+    .subtitle { color: #888; font-size: 13px; margin-bottom: 25px; }
+    .form-group { text-align: left; margin-bottom: 18px; }
+    label { display: block; font-weight: 600; font-size: 13px; color: #555; margin-bottom: 6px; }
+    input[type="password"] { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 15px; font-family: 'Sarabun', sans-serif; transition: all 0.3s; }
+    input[type="password"]:focus { outline: none; border-color: #1a237e; box-shadow: 0 0 0 3px rgba(26,35,126,0.1); }
+    .btn { width: 100%; padding: 13px; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; font-family: 'Sarabun', sans-serif; transition: all 0.3s; }
+    .btn-admin { background: linear-gradient(135deg, #1a237e, #283593); color: #fff; }
+    .btn-admin:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(26,35,126,0.3); }
+    .btn-admin:disabled { opacity: 0.5; transform: none; cursor: not-allowed; }
+    .error { color: #c62828; font-size: 13px; margin-top: 12px; display: none; background: #ffebee; padding: 8px 12px; border-radius: 8px; }
+    .error.show { display: block; }
+    .loading { display: none; color: #1a237e; font-size: 14px; margin-top: 12px; }
+    .loading.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="icon">🛡️</div>
+    <h2>เข้าสู่ระบบ Admin</h2>
+    <p class="subtitle">ระบบประเมินผลการปฏิบัติงานครู</p>
+
+    <div class="form-group">
+      <label>🔑 รหัสผ่าน Admin</label>
+      <input type="password" id="adminPass" placeholder="กรอกรหัสผ่าน" onkeypress="if(event.key==='Enter') doLogin()">
+    </div>
+
+    <button class="btn btn-admin" id="loginBtn" onclick="doLogin()">เข้าสู่ระบบ</button>
+
+    <div class="error" id="errorMsg"></div>
+    <div class="loading" id="loading">⏳ กำลังตรวจสอบ...</div>
+  </div>
+
+  <script>
+    function doLogin() {
+      var pass = document.getElementById('adminPass').value.trim();
+      if (!pass) { showError('กรุณากรอกรหัสผ่าน'); return; }
+
+      document.getElementById('loginBtn').disabled = true;
+      document.getElementById('loading').classList.add('show');
+      document.getElementById('errorMsg').classList.remove('show');
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          document.getElementById('loading').classList.remove('show');
+          if (result.success) {
+            google.script.host.close();
+            google.script.run.showAdminPanel();
+          } else {
+            showError(result.message);
+            document.getElementById('loginBtn').disabled = false;
+          }
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('loading').classList.remove('show');
+          showError('เกิดข้อผิดพลาด: ' + err.message);
+          document.getElementById('loginBtn').disabled = false;
+        })
+        .verifyAdminPassword(pass);
+    }
+
+    function showError(msg) {
+      var el = document.getElementById('errorMsg');
+      el.textContent = '❌ ' + msg;
+      el.classList.add('show');
+    }
+  </script>
+</body>
+</html>

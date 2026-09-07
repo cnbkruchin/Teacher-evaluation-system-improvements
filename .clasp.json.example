@@ -1,0 +1,4 @@
+{
+  "scriptId": "<<ใส่ Script ID ของโปรเจกต์ Apps Script ที่ผูกกับ Google Sheets>>",
+  "rootDir": "src"
+}

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Sarabun', sans-serif; background: #f0f2f5; color: #333; }
+
+    /* Sidebar */
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; background: linear-gradient(180deg, #1a237e 0%, #283593 100%); color: #fff; padding: 20px 0; flex-shrink: 0; }
+    .sidebar .logo { text-align: center; padding: 10px 15px 25px; border-bottom: 1px solid rgba(255,255,255,0.15); }
+    .sidebar .logo .icon { font-size: 32px; }
+    .sidebar .logo h3 { font-size: 14px; margin-top: 5px; font-weight: 600; }
+    .sidebar .logo small { font-size: 11px; opacity: 0.7; }
+    .sidebar nav { padding: 15px 0; }
+    .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 20px; color: rgba(255,255,255,0.75); text-decoration: none; font-size: 13px; transition: all 0.2s; cursor: pointer; border-left: 3px solid transparent; }
+    .sidebar nav a:hover, .sidebar nav a.active { background: rgba(255,255,255,0.1); color: #fff; border-left-color: #ffd740; }
+    .sidebar nav a .emoji { font-size: 16px; width: 22px; text-align: center; }
+    .sidebar .divider { border-top: 1px solid rgba(255,255,255,0.1); margin: 8px 15px; }
+
+    /* Main */
+    .main { flex: 1; padding: 25px; overflow-y: auto; max-height: 100vh; }
+    .page { display: none; }
+    .page.active { display: block; }
+    .page-title { font-size: 20px; font-weight: 700; color: #1a237e; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+
+    /* Cards */
+    .card { background: #fff; border-radius: 12px; padding: 22px; margin-bottom: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    .card h3 { font-size: 15px; color: #1a237e; margin-bottom: 15px; }
+
+    /* Stats Row */
+    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .stat-card { background: #fff; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    .stat-card .num { font-size: 28px; font-weight: 700; }
+    .stat-card .lbl { font-size: 11px; color: #888; margin-top: 3px; }
+    .stat-card.c1 .num { color: #1565c0; }
+    .stat-card.c2 .num { color: #2e7d32; }
+    .stat-card.c3 .num { color: #e65100; }
+    .stat-card.c4 .num { color: #6a1b9a; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f5f5f5; padding: 10px 12px; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #e0e0e0; white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+    tr:hover td { background: #fafafa; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-active { background: #c8e6c9; color: #2e7d32; }
+    .badge-inactive { background: #ffcdd2; color: #c62828; }
+    .badge-excellent { background: #c8e6c9; color: #2e7d32; }
+    .badge-great { background: #dcedc8; color: #558b2f; }
+    .badge-good { background: #fff9c4; color: #f57f17; }
+    .badge-fair { background: #ffe0b2; color: #e65100; }
+    .badge-improve { background: #ffcdd2; color: #c62828; }
+
+    /* Buttons */
+    .btn { padding: 7px 16px; border: none; border-radius: 8px; font-family: 'Sarabun', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-sm { padding: 5px 12px; font-size: 11px; }
+    .btn-primary { background: #1a237e; color: #fff; }
+    .btn-warning { background: #ff9800; color: #fff; }
+    .btn-danger { background: #c62828; color: #fff; }
+    .btn-success { background: #2e7d32; color: #fff; }
+    .btn-outline { background: transparent; border: 1px solid #ccc; color: #555; }
+
+    /* Forms */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+    .form-group input, .form-group select { width: 100%; padding: 9px 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: 'Sarabun', sans-serif; font-size: 13px; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #1a237e; }
+    .full-width { grid-column: 1 / -1; }
+
+    /* Alert */
+    .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; display: none; }
+    .alert.show { display: block; }
+    .alert-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+    .alert-error { background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+    .alert-warning { background: #fff8e1; color: #e65100; border: 1px solid #ffecb3; }
+    .alert-info { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
+
+    /* Password Display */
+    .password-display { background: #fff8e1; border: 2px dashed #ffc107; border-radius: 10px; padding: 18px; text-align: center; margin: 15px 0; }
+    .password-display .pw { font-size: 24px; font-weight: 700; color: #e65100; letter-spacing: 2px; font-family: monospace; margin: 8px 0; }
+    .password-display .name { font-size: 14px; color: #555; }
+
+    /* Chart */
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+    .chart-box { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    .chart-box h4 { font-size: 13px; color: #1a237e; margin-bottom: 10px; }
+    .chart-box canvas { max-height: 200px; }
+
+    /* Search */
+    .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
+    .search-box input { flex: 1; padding: 9px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: 'Sarabun', sans-serif; font-size: 13px; }
+    .search-box input:focus { outline: none; border-color: #1a237e; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="logo">
+        <div class="icon">🛡️</div>
+        <h3>Admin Panel</h3>
+        <small>ระบบประเมินผลครู</small>
+      </div>
+      <nav>
+        <a class="active" onclick="showPage('dashboard')"><span class="emoji">📊</span> แดชบอร์ด</a>
+        <a onclick="showPage('evaluators')"><span class="emoji">👥</span> จัดการผู้ประเมิน</a>
+        <a onclick="showPage('addEvaluator')"><span class="emoji">➕</span> เพิ่มผู้ประเมิน</a>
+        <div class="divider"></div>
+        <a onclick="showPage('results')"><span class="emoji">📋</span> ผลการประเมิน</a>
+        <a onclick="doGenerateSummary()"><span class="emoji">📈</span> สรุปผล</a>
+        <div class="divider"></div>
+        <a onclick="showPage('changePassword')"><span class="emoji">🔑</span> เปลี่ยนรหัสผ่าน</a>
+        <a onclick="google.script.host.close()"><span class="emoji">🚪</span> ออกจากระบบ</a>
+      </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main">
+
+      <!-- PAGE: Dashboard -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-title">📊 แดชบอร์ดภาพรวม</div>
+        <div class="stats-row">
+          <div class="stat-card c1"><div class="num" id="s-total">-</div><div class="lbl">การประเมินทั้งหมด</div></div>
+          <div class="stat-card c2"><div class="num" id="s-teachers">-</div><div class="lbl">ครูที่ถูกประเมิน</div></div>
+          <div class="stat-card c3"><div class="num" id="s-avg">-</div><div class="lbl">คะแนนเฉลี่ยรวม</div></div>
+          <div class="stat-card c4"><div class="num" id="s-excellent">-</div><div class="lbl">ครูระดับ "ดีเยี่ยม"</div></div>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-box"><h4>📊 การกระจายระดับผลประเมิน</h4><canvas id="chartRating"></canvas></div>
+          <div class="chart-box"><h4>📈 คะแนนเฉลี่ยตามระดับชั้น</h4><canvas id="chartLevel"></canvas></div>
+          <div class="chart-box"><h4>📅 คะแนนเฉลี่ยตามเวรประจำวัน</h4><canvas id="chartDay"></canvas></div>
+          <div class="chart-box"><h4>👥 จำนวนประเมินตามบทบาท</h4><canvas id="chartRole"></canvas></div>
+        </div>
+        <div class="card" style="margin-top:15px;">
+          <h3>🏆 อันดับครูคะแนนสูงสุด (Top 10)</h3>
+          <div id="topTeachers"></div>
+        </div>
+      </div>
+
+      <!-- PAGE: Evaluators List -->
+      <div class="page" id="page-evaluators">
+        <div class="page-title">👥 จัดการผู้ประเมิน</div>
+        <div id="evalAlert" class="alert"></div>
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>#</th><th>ชื่อ-นามสกุล</th><th>บทบาท</th><th>ขอบเขต</th><th>อีเมล</th><th>สถานะ</th><th>จัดการ</th></tr>
+              </thead>
+              <tbody id="evalTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="pwResetDisplay" class="password-display" style="display:none;">
+          <div>🔑 รหัสผ่านใหม่สำหรับ</div>
+          <div class="name" id="pwResetName"></div>
+          <div class="pw" id="pwResetValue"></div>
+          <div style="font-size:12px; color:#888; margin-top:8px;">⚠️ กรุณาจดรหัสผ่านนี้ให้ผู้ประเมิน</div>
+        </div>
+      </div>
+
+      <!-- PAGE: Add Evaluator -->
+      <div class="page" id="page-addEvaluator">
+        <div class="page-title">➕ เพิ่มผู้ประเมินใหม่</div>
+        <div id="addAlert" class="alert"></div>
+        <div class="card">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>คำนำหน้า</label>
+              <select id="addPrefix">
+                <option value="นาย">นาย</option>
+                <option value="นาง">นาง</option>
+                <option value="นางสาว">นางสาว</option>
+                <option value="ว่าที่ ร.ต.">ว่าที่ ร.ต.</option>
+                <option value="ดร.">ดร.</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ชื่อ</label>
+              <input type="text" id="addFirstName" placeholder="ชื่อ">
+            </div>
+            <div class="form-group">
+              <label>นามสกุล</label>
+              <input type="text" id="addLastName" placeholder="นามสกุล">
+            </div>
+            <div class="form-group">
+              <label>บทบาท</label>
+              <select id="addRole" onchange="onRoleChange()">
+                <option value="">-- เลือกบทบาท --</option>
+                <option value="รองผู้อำนวยการฝ่ายกิจการนักเรียน">รองผู้อำนวยการฝ่ายกิจการนักเรียน</option>
+                <option value="หัวหน้ากลุ่มบริหารงานกิจการนักเรียน">หัวหน้ากลุ่มบริหารงานกิจการนักเรียน</option>
+                <option value="หัวหน้าระดับชั้น">หัวหน้าระดับชั้น</option>
+                <option value="หัวหน้าเวรประจำวัน">หัวหน้าเวรประจำวัน</option>
+              </select>
+            </div>
+            <div class="form-group" id="scopeGroup" style="display:none;">
+              <label id="scopeLabel">ระดับชั้น/วัน</label>
+              <select id="addScope"></select>
+            </div>
+            <div class="form-group">
+              <label>อีเมล (ถ้ามี)</label>
+              <input type="email" id="addEmail" placeholder="email@example.com">
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <button class="btn btn-primary" onclick="doAddEvaluator()" id="addBtn">➕ เพิ่มผู้ประเมิน</button>
+          </div>
+        </div>
+        <div id="newPwDisplay" class="password-display" style="display:none;">
+          <div>✅ เพิ่มผู้ประเมินเรียบร้อย!</div>
+          <div class="name" id="newPwName"></div>
+          <div>🔑 รหัสผ่านที่สุ่มให้:</div>
+          <div class="pw" id="newPwValue"></div>
+          <div style="font-size:12px; color:#888; margin-top:8px;">⚠️ กรุณาจดรหัสผ่านนี้และแจ้งให้ผู้ประเมินทราบ<br>รหัสผ่านนี้จะไม่แสดงซ้ำอีก!</div>
+        </div>
+      </div>
+
+      <!-- PAGE: Results -->
+      <div class="page" id="page-results">
+        <div class="page-title">📋 ผลการประเมินทั้งหมด</div>
+        <div class="search-box">
+          <input type="text" id="searchTeacher" placeholder="🔍 ค้นหาชื่อครู..." onkeypress="if(event.key==='Enter') doSearchResults()">
+          <button class="btn btn-primary" onclick="doSearchResults()">ค้นหา</button>
+          <button class="btn btn-outline" onclick="loadAllResults()">แสดงทั้งหมด</button>
+        </div>
+        <div id="resultAlert" class="alert"></div>
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>#</th><th>วันที่</th><th>ผู้ประเมิน</th><th>บทบาท</th><th>ภาคเรียน</th><th>ครู</th><th>เฉลี่ย</th><th>ระดับ</th><th>จัดการ</th></tr>
+              </thead>
+              <tbody id="resultTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Change Password -->
+      <div class="page" id="page-changePassword">
+        <div class="page-title">🔑 เปลี่ยนรหัสผ่าน Admin</div>
+        <div id="cpAlert" class="alert"></div>
+        <div class="card" style="max-width: 400px;">
+          <div class="form-group">
+            <label>รหัสผ่านเดิม</label>
+            <input type="password" id="oldPass" placeholder="กรอกรหัสผ่านเดิม">
+          </div>
+          <div class="form-group">
+            <label>รหัสผ่านใหม่</label>
+            <input type="password" id="newPass" placeholder="กรอกรหัสผ่านใหม่ (อย่างน้อย 6 ตัว)">
+          </div>
+          <div class="form-group">
+            <label>ยืนยันรหัสผ่านใหม่</label>
+            <input type="password" id="confirmPass" placeholder="กรอกรหัสผ่านใหม่อีกครั้ง">
+          </div>
+          <button class="btn btn-primary" onclick="doChangePassword()">💾 เปลี่ยนรหัสผ่าน</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ==================== NAV ====================
+    function showPage(name) {
+      document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+      document.querySelectorAll('.sidebar nav a').forEach(function(a) { a.classList.remove('active'); });
+      document.getElementById('page-' + name).classList.add('active');
+      event.currentTarget.classList.add('active');
+
+      if (name === 'dashboard') loadDashboard();
+      if (name === 'evaluators') loadEvaluators();
+      if (name === 'results') loadAllResults();
+    }
+
+    // ==================== DASHBOARD ====================
+    var chartsCreated = false;
+    function loadDashboard() {
+      google.script.run.withSuccessHandler(renderDashboard).getDashboardData();
+    }
+
+    function renderDashboard(stats) {
+      if (stats.totalEvaluations === 0) {
+        document.getElementById('s-total').textContent = '0';
+        document.getElementById('s-teachers').textContent = '0';
+        document.getElementById('s-avg').textContent = '-';
+        document.getElementById('s-excellent').textContent = '0';
+        return;
+      }
+
+      var teacherCount = Object.keys(stats.teachers).length;
+      var allScores = []; var excellentCount = 0;
+      Object.values(stats.teachers).forEach(function(t) {
+        var a = t.scores.reduce(function(x,y){return x+y;},0) / t.scores.length;
+        allScores.push(a);
+        if (a >= 4.5) excellentCount++;
+      });
+      var overallAvg = allScores.length > 0 ? (allScores.reduce(function(x,y){return x+y;},0)/allScores.length).toFixed(2) : '-';
+
+      document.getElementById('s-total').textContent = stats.totalEvaluations;
+      document.getElementById('s-teachers').textContent = teacherCount;
+      document.getElementById('s-avg').textContent = overallAvg;
+      document.getElementById('s-excellent').textContent = excellentCount;
+
+      // Destroy old charts
+      if (chartsCreated) {
+        Chart.helpers.each(Chart.instances, function(instance) { instance.destroy(); });
+      }
+
+      // Rating
+      new Chart(document.getElementById('chartRating'), {
+        type: 'doughnut',
+        data: { labels: Object.keys(stats.ratingDistribution), datasets: [{ data: Object.values(stats.ratingDistribution), backgroundColor: ['#4caf50','#8bc34a','#ffeb3b','#ff9800','#f44336'] }] },
+        options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { family: 'Sarabun', size: 10 } } } } }
+      });
+
+      // Level
+      var levels = ['ม.1','ม.2','ม.3','ม.4','ม.5','ม.6'];
+      var lvlAvgs = levels.map(function(l) { return stats.byLevel[l] ? (stats.byLevel[l].reduce(function(a,b){return a+b;},0)/stats.byLevel[l].length).toFixed(2) : 0; });
+      new Chart(document.getElementById('chartLevel'), {
+        type: 'bar',
+        data: { labels: levels, datasets: [{ data: lvlAvgs, backgroundColor: '#42a5f5', borderColor: '#1565c0', borderWidth: 1 }] },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 5 } } }
+      });
+
+      // Day
+      var days = ['จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์'];
+      var dayAvgs = days.map(function(d) { return stats.byDay[d] ? (stats.byDay[d].reduce(function(a,b){return a+b;},0)/stats.byDay[d].length).toFixed(2) : 0; });
+      new Chart(document.getElementById('chartDay'), {
+        type: 'bar',
+        data: { labels: days, datasets: [{ data: dayAvgs, backgroundColor: '#f06292', borderColor: '#c2185b', borderWidth: 1 }] },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 5 } } }
+      });
+
+      // Role
+      new Chart(document.getElementById('chartRole'), {
+        type: 'pie',
+        data: { labels: Object.keys(stats.byRole).map(function(l){ return l.length > 15 ? l.substring(0,15)+'...' : l; }), datasets: [{ data: Object.values(stats.byRole), backgroundColor: ['#7e57c2','#5c6bc0','#42a5f5','#26c6da'] }] },
+        options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { family: 'Sarabun', size: 10 } } } } }
+      });
+      chartsCreated = true;
+
+      // Top teachers
+      var ranking = Object.entries(stats.teachers).map(function(e) {
+        return { name: e[0], avg: e[1].scores.reduce(function(a,b){return a+b;},0)/e[1].scores.length, level: e[1].level };
+      }).sort(function(a,b){ return b.avg - a.avg; }).slice(0, 10);
+
+      var html = '<table><thead><tr><th>อันดับ</th><th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>คะแนนเฉลี่ย</th><th>ระดับ</th></tr></thead><tbody>';
+      ranking.forEach(function(t, i) {
+        var lv = getLevel(t.avg);
+        html += '<tr><td>' + (i+1) + '</td><td>' + t.name + '</td><td>' + t.level + '</td><td><strong>' + t.avg.toFixed(2) + '</strong></td><td><span class="badge ' + getBadgeClass(lv) + '">' + lv + '</span></td></tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('topTeachers').innerHTML = ranking.length > 0 ? html : '<p style="color:#999;text-align:center;padding:20px;">ยังไม่มีข้อมูล</p>';
+    }
+
+    // ==================== EVALUATORS ====================
+    function loadEvaluators() {
+      google.script.run.withSuccessHandler(function(list) {
+        var tbody = document.getElementById('evalTableBody');
+        tbody.innerHTML = '';
+        list.forEach(function(e, i) {
+          var statusBadge = e.status === 'ใช้งาน' ? '<span class="badge badge-active">ใช้งาน</span>' : '<span class="badge badge-inactive">ไม่ใช้งาน</span>';
+          var toggleText = e.status === 'ใช้งาน' ? 'ปิด' : 'เปิด';
+          tbody.innerHTML += '<tr>' +
+            '<td>' + (i+1) + '</td>' +
+            '<td>' + e.fullName + '</td>' +
+            '<td style="font-size:11px;">' + e.role + '</td>' +
+            '<td>' + (e.scope || '-') + '</td>' +
+            '<td style="font-size:11px;">' + (e.email || '-') + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' +
+              '<button class="btn btn-warning btn-sm" onclick="doResetPassword(\'' + e.fullName + '\')">🔑 รีเซ็ต</button> ' +
+              '<button class="btn btn-outline btn-sm" onclick="doToggleStatus(\'' + e.fullName + '\')">' + toggleText + '</button>' +
+            '</td></tr>';
+        });
+        if (list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:30px;">ยังไม่มีผู้ประเมิน</td></tr>';
+        }
+      }).adminGetEvaluators();
+    }
+
+    function doResetPassword(fullName) {
+      if (!confirm('ต้องการรีเซ็ตรหัสผ่านของ\n' + fullName + ' ?')) return;
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.success) {
+          document.getElementById('pwResetDisplay').style.display = 'block';
+          document.getElementById('pwResetName').textContent = r.fullName;
+          document.getElementById('pwResetValue').textContent = r.password;
+          showAlert('evalAlert', 'success', '✅ รีเซ็ตรหัสผ่านเรียบร้อย');
+        } else {
+          showAlert('evalAlert', 'error', '❌ ' + r.message);
+        }
+      }).adminResetEvaluatorPassword(fullName);
+    }
+
+    function doToggleStatus(fullName) {
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.success) {
+          showAlert('evalAlert', 'success', '✅ เปลี่ยนสถานะเรียบร้อย → ' + r.newStatus);
+          loadEvaluators();
+        }
+      }).adminToggleEvaluatorStatus(fullName);
+    }
+
+    // ==================== ADD EVALUATOR ====================
+    function onRoleChange() {
+      var role = document.getElementById('addRole').value;
+      var scopeGroup = document.getElementById('scopeGroup');
+      var scopeSelect = document.getElementById('addScope');
+      var scopeLabel = document.getElementById('scopeLabel');
+
+      if (role === 'หัวหน้าระดับชั้น') {
+        scopeGroup.style.display = 'block';
+        scopeLabel.textContent = 'ระดับชั้นที่รับผิดชอบ';
+        scopeSelect.innerHTML = '<option value="">-- เลือก --</option>';
+        ['ม.1','ม.2','ม.3','ม.4','ม.5','ม.6'].forEach(function(l) {
+          scopeSelect.innerHTML += '<option value="' + l + '">' + l + '</option>';
+        });
+      } else if (role === 'หัวหน้าเวรประจำวัน') {
+        scopeGroup.style.display = 'block';
+        scopeLabel.textContent = 'เวรประจำวัน';
+        scopeSelect.innerHTML = '<option value="">-- เลือก --</option>';
+        ['จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์'].forEach(function(d) {
+          scopeSelect.innerHTML += '<option value="' + d + '">' + d + '</option>';
+        });
+      } else {
+        scopeGroup.style.display = 'none';
+      }
+    }
+
+    function doAddEvaluator() {
+      var prefix = document.getElementById('addPrefix').value;
+      var firstName = document.getElementById('addFirstName').value.trim();
+      var lastName = document.getElementById('addLastName').value.trim();
+      var role = document.getElementById('addRole').value;
+      var scope = document.getElementById('addScope') ? document.getElementById('addScope').value : '';
+      var email = document.getElementById('addEmail').value.trim();
+
+      if (!firstName || !lastName) { showAlert('addAlert', 'error', '❌ กรุณากรอกชื่อและนามสกุล'); return; }
+      if (!role) { showAlert('addAlert', 'error', '❌ กรุณาเลือกบทบาท'); return; }
+      if ((role === 'หัวหน้าระดับชั้น' || role === 'หัวหน้าเวรประจำวัน') && !scope) {
+        showAlert('addAlert', 'error', '❌ กรุณาเลือกระดับชั้น/วัน'); return;
+      }
+
+      document.getElementById('addBtn').disabled = true;
+
+      google.script.run.withSuccessHandler(function(r) {
+        document.getElementById('addBtn').disabled = false;
+        if (r.success) {
+          document.getElementById('newPwDisplay').style.display = 'block';
+          document.getElementById('newPwName').textContent = r.fullName;
+          document.getElementById('newPwValue').textContent = r.password;
+          showAlert('addAlert', 'success', '✅ ' + r.message);
+          // Clear form
+          document.getElementById('addFirstName').value = '';
+          document.getElementById('addLastName').value = '';
+          document.getElementById('addRole').value = '';
+          document.getElementById('addEmail').value = '';
+          document.getElementById('scopeGroup').style.display = 'none';
+        } else {
+          showAlert('addAlert', 'error', '❌ ' + r.message);
+        }
+      }).withFailureHandler(function(err) {
+        document.getElementById('addBtn').disabled = false;
+        showAlert('addAlert', 'error', '❌ เกิดข้อผิดพลาด: ' + err.message);
+      }).adminAddEvaluator({
+        prefix: prefix, firstName: firstName, lastName: lastName,
+        role: role, scope: scope, email: email
+      });
+    }
+
+    // ==================== RESULTS ====================
+    function loadAllResults() {
+      google.script.run.withSuccessHandler(renderResults).getEvaluationHistory('');
+    }
+
+    function doSearchResults() {
+      var q = document.getElementById('searchTeacher').value.trim();
+      if (!q) { loadAllResults(); return; }
+      google.script.run.withSuccessHandler(renderResults).getEvaluationHistory(q);
+    }
+
+    function renderResults(list) {
+      var tbody = document.getElementById('resultTableBody');
+      tbody.innerHTML = '';
+      list.forEach(function(r, i) {
+        var ts = r.timestamp ? new Date(r.timestamp).toLocaleString('th-TH') : '-';
+        var avgStr = r.avg ? Number(r.avg).toFixed(2) : '-';
+        var lv = r.rating || '-';
+        var badge = getBadgeClass(lv);
+        tbody.innerHTML += '<tr>' +
+          '<td>' + (i+1) + '</td><td style="font-size:11px;">' + ts + '</td>' +
+          '<td>' + r.evaluator + '</td><td style="font-size:11px;">' + r.role + '</td>' +
+          '<td>' + r.semester + '</td><td>' + r.teacher + '</td>' +
+          '<td><strong>' + avgStr + '</strong></td><td><span class="badge ' + badge + '">' + lv + '</span></td>' +
+          '<td><button class="btn btn-danger btn-sm" onclick="doDeleteResult(' + r.row + ')">🗑️</button></td></tr>';
+      });
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999;padding:30px;">ไม่พบข้อมูล</td></tr>';
+      }
+    }
+
+    function doDeleteResult(row) {
+      if (!confirm('ต้องการลบผลการประเมินนี้?')) return;
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.success) {
+          showAlert('resultAlert', 'success', '✅ ลบเรียบร้อย');
+          loadAllResults();
+        }
+      }).adminDeleteEvaluation(row);
+    }
+
+    // ==================== CHANGE PASSWORD ====================
+    function doChangePassword() {
+      var oldP = document.getElementById('oldPass').value;
+      var newP = document.getElementById('newPass').value;
+      var confirmP = document.getElementById('confirmPass').value;
+
+      if (!oldP || !newP) { showAlert('cpAlert', 'error', '❌ กรุณากรอกข้อมูลให้ครบ'); return; }
+      if (newP.length < 6) { showAlert('cpAlert', 'error', '❌ รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร'); return; }
+      if (newP !== confirmP) { showAlert('cpAlert', 'error', '❌ รหัสผ่านใหม่ไม่ตรงกัน'); return; }
+
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.success) {
+          showAlert('cpAlert', 'success', '✅ เปลี่ยนรหัสผ่านเรียบร้อย');
+          document.getElementById('oldPass').value = '';
+          document.getElementById('newPass').value = '';
+          document.getElementById('confirmPass').value = '';
+        } else {
+          showAlert('cpAlert', 'error', '❌ ' + r.message);
+        }
+      }).adminChangePassword(oldP, newP);
+    }
+
+    // ==================== UTILS ====================
+    function showAlert(id, type, msg) {
+      var el = document.getElementById(id);
+      el.className = 'alert alert-' + type + ' show';
+      el.textContent = msg;
+      setTimeout(function() { el.classList.remove('show'); }, 5000);
+    }
+
+    function getLevel(s) {
+      if (s >= 4.5) return 'ดีเยี่ยม';
+      if (s >= 3.5) return 'ดีมาก';
+      if (s >= 2.5) return 'ดี';
+      if (s >= 1.5) return 'พอใช้';
+      return 'ปรับปรุง';
+    }
+
+    function getBadgeClass(l) {
+      if (l === 'ดีเยี่ยม') return 'badge-excellent';
+      if (l === 'ดีมาก') return 'badge-great';
+      if (l === 'ดี') return 'badge-good';
+      if (l === 'พอใช้') return 'badge-fair';
+      return 'badge-improve';
+    }
+
+    function doGenerateSummary() {
+      google.script.host.close();
+      google.script.run.generateSummary();
+    }
+
+    // Initial load
+    loadDashboard();
+  </script>
+</body>
+</html>

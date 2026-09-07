@@ -1,0 +1,384 @@
+<script>
+/* ============================================================
+   AdminExportJs — เลือกและจัดลำดับผู้ถูกประเมิน → ประมวลผล → ส่งออก Excel/PDF
+   ============================================================ */
+
+const Exporter = {
+  data: null,
+  selected: [],      // เก็บ key ตามลำดับที่ผู้ใช้จัดไว้
+  sortBy: 'custom',
+  dragKey: null
+};
+
+App.pages.export = async function (container) {
+  const term = Exporter.term || {};
+  const data = await api('apiExportCandidates', App.session.token, term.year || '', term.semester || '');
+  Exporter.data = data;
+  Exporter.term = { year: data.year, semester: data.semester };
+  App.setTermBadge(data.year, data.semester);
+
+  // ครั้งแรกให้เลือกเฉพาะผู้ที่มีผลการประเมินแล้ว
+  if (!Exporter.selected.length) {
+    Exporter.selected = data.candidates.filter(function (c) { return c.evaluated; }).map(function (c) { return c.key; });
+  } else {
+    const valid = {};
+    data.candidates.forEach(function (c) { valid[c.key] = true; });
+    Exporter.selected = Exporter.selected.filter(function (k) { return valid[k]; });
+  }
+
+  container.innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>1️⃣ เลือกภาคเรียนที่ต้องการออกรายงาน</h3></div>' +
+      '<div class="filters" style="margin-bottom:0">' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="exYear">' +
+          optionsHtml(data.years, data.year) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="exSemester">' +
+          optionsHtml(data.semesters, data.semester, function (s) {
+            return { value: s, label: 'ภาคเรียนที่ ' + s }; }) + '</select></div>' +
+        '<button class="btn btn--soft" id="btnLoadTerm">🔄 โหลดข้อมูลภาคเรียนนี้</button>' +
+        '<label class="checkbox" style="margin-left:8px"><input type="checkbox" id="optIncludeArchive">' +
+          '<span>รวมข้อมูลจากคลังย้อนหลังด้วย<div class="small muted">ใช้เมื่อภาคเรียนนั้นถูกปิดและจัดเก็บไปแล้ว</div></span></label>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>2️⃣ เลือกและจัดลำดับผู้ถูกประเมิน</h3>' +
+        '<div class="spacer"></div>' +
+        '<div class="field" style="margin:0"><select id="sortPreset" style="min-width:210px">' +
+          '<option value="custom">🖐️ จัดลำดับเอง (ลากเพื่อสลับ)</option>' +
+          '<option value="name">🔤 เรียงตามชื่อ ก-ฮ</option>' +
+          '<option value="scoreDesc">⬇️ เรียงคะแนนมาก → น้อย</option>' +
+          '<option value="scoreAsc">⬆️ เรียงคะแนนน้อย → มาก</option>' +
+          '<option value="level">🏫 เรียงตามระดับชั้น</option>' +
+          '<option value="dutyDay">📅 เรียงตามเวรประจำวัน</option>' +
+        '</select></div>' +
+      '</div>' +
+      '<div class="picker">' +
+        '<div class="picker__col">' +
+          '<div class="picker__head"><h4>รายชื่อทั้งหมด</h4>' +
+            '<button class="btn btn--ghost btn--sm" id="btnSelectAll">เลือกทั้งหมด</button>' +
+            '<button class="btn btn--ghost btn--sm" id="btnSelectEvaluated">เฉพาะที่ประเมินแล้ว</button></div>' +
+          '<div class="picker__head" style="background:var(--surface)">' +
+            '<input type="text" id="candSearch" placeholder="🔍 ค้นหาชื่อครู" style="flex:1">' +
+            '<select id="candLevel" style="max-width:120px">' +
+              optionsHtml(['all'].concat(data.levels), 'all', function (l) {
+                return { value: l, label: l === 'all' ? 'ทุกระดับชั้น' : l }; }) + '</select>' +
+            '<select id="candDay" style="max-width:130px">' +
+              optionsHtml(['all'].concat(data.days), 'all', function (d) {
+                return { value: d, label: d === 'all' ? 'ทุกวันเวร' : 'วัน' + d }; }) + '</select>' +
+          '</div>' +
+          '<div class="picker__list" id="availableList"></div>' +
+        '</div>' +
+        '<div class="picker__col">' +
+          '<div class="picker__head"><h4>รายการที่จะส่งออก (<span id="selCount">0</span> คน)</h4>' +
+            '<button class="btn btn--ghost btn--sm" id="btnClearSelected">ล้างทั้งหมด</button></div>' +
+          '<div class="picker__list" id="selectedList"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>3️⃣ ตั้งค่ารายงานและประมวลผล</h3></div>' +
+      '<div class="grid grid-2">' +
+        '<div>' +
+          '<div class="field"><label>ชื่อรายงาน</label>' +
+            '<input type="text" id="optTitle" value="รายงานผลการประเมินการปฏิบัติงานครู"></div>' +
+          '<div class="field"><label>หมายเหตุท้ายหัวรายงาน (ถ้ามี)</label>' +
+            '<input type="text" id="optNote" placeholder="เช่น เสนอต่อคณะกรรมการบริหารโรงเรียน"></div>' +
+          '<div class="field"><label>การวางแนวกระดาษ (PDF)</label>' +
+            '<select id="optOrientation"><option value="landscape">แนวนอน (แนะนำ)</option>' +
+            '<option value="portrait">แนวตั้ง</option></select></div>' +
+        '</div>' +
+        '<div>' +
+          '<label class="label">แผ่นงานที่ต้องการในรายงาน</label>' +
+          '<label class="checkbox"><input type="checkbox" id="optDetail" checked>' +
+            '<span>คะแนนเฉลี่ยรายข้อ<div class="small muted">ตารางคะแนนแยกตามเกณฑ์แต่ละข้อ</div></span></label>' +
+          '<label class="checkbox"><input type="checkbox" id="optComments" checked>' +
+            '<span>ข้อเสนอแนะจากผู้ประเมิน</span></label>' +
+          '<label class="checkbox"><input type="checkbox" id="optRawList">' +
+            '<span>รายการประเมินทั้งหมด<div class="small muted">ทุกครั้งที่ถูกประเมิน แยกตามผู้ประเมิน</div></span></label>' +
+        '</div>' +
+      '</div>' +
+      '<div class="btn-row" style="margin-top:6px">' +
+        '<button class="btn btn--soft" id="btnPreview">👁️ ประมวลผล / ดูตัวอย่าง</button>' +
+        '<button class="btn btn--ok" id="btnExportXlsx">📊 ส่งออก Excel</button>' +
+        '<button class="btn btn--danger" id="btnExportPdf">📄 ส่งออก PDF</button>' +
+        '<button class="btn" id="btnExportBoth">📦 ส่งออกทั้งสองรูปแบบ</button>' +
+        '<button class="btn btn--ghost" id="btnSummarySheet">📑 สรุปลงชีทในไฟล์นี้</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div id="previewArea"></div>' +
+    '<div id="fileArea"></div>';
+
+  Exporter.bind();
+  Exporter.render();
+};
+
+Exporter.bind = function () {
+  $('btnLoadTerm').onclick = function () {
+    Exporter.term = { year: $('exYear').value, semester: $('exSemester').value };
+    Exporter.selected = [];
+    App.go('export');
+  };
+  $('btnSelectAll').onclick = function () {
+    Exporter.selected = Exporter.filtered().map(function (c) { return c.key; });
+    Exporter.render();
+  };
+  $('btnSelectEvaluated').onclick = function () {
+    Exporter.selected = Exporter.filtered().filter(function (c) { return c.evaluated; }).map(function (c) { return c.key; });
+    Exporter.render();
+  };
+  $('btnClearSelected').onclick = function () { Exporter.selected = []; Exporter.render(); };
+  $('candSearch').oninput = debounce(function () { Exporter.renderAvailable(); }, 200);
+  $('candLevel').onchange = function () { Exporter.renderAvailable(); };
+  $('candDay').onchange = function () { Exporter.renderAvailable(); };
+
+  $('sortPreset').onchange = function () {
+    Exporter.sortBy = this.value;
+    Exporter.applySort();
+    Exporter.render();
+  };
+
+  $('btnPreview').onclick = function () { Exporter.preview(this); };
+  $('btnExportXlsx').onclick = function () { Exporter.exportReport(['xlsx'], this); };
+  $('btnExportPdf').onclick = function () { Exporter.exportReport(['pdf'], this); };
+  $('btnExportBoth').onclick = function () { Exporter.exportReport(['xlsx', 'pdf'], this); };
+  $('btnSummarySheet').onclick = function () { Exporter.generateSummary(this); };
+};
+
+/** รายชื่อหลังกรองในคอลัมน์ซ้าย */
+Exporter.filtered = function () {
+  const keyword = ($('candSearch') ? $('candSearch').value : '').trim().toLowerCase();
+  const level = $('candLevel') ? $('candLevel').value : 'all';
+  const day = $('candDay') ? $('candDay').value : 'all';
+  return Exporter.data.candidates.filter(function (c) {
+    if (keyword && c.name.toLowerCase().indexOf(keyword) === -1) return false;
+    if (level !== 'all' && c.level !== level) return false;
+    if (day !== 'all' && c.dutyDay !== day) return false;
+    return true;
+  });
+};
+
+Exporter.byKey = function (key) {
+  return Exporter.data.candidates.filter(function (c) { return c.key === key; })[0];
+};
+
+Exporter.applySort = function () {
+  const mode = Exporter.sortBy;
+  if (mode === 'custom') return;
+  const levels = Exporter.data.levels, days = Exporter.data.days;
+  const items = Exporter.selected.map(Exporter.byKey).filter(Boolean);
+
+  items.sort(function (a, b) {
+    if (mode === 'name') return a.name.localeCompare(b.name, 'th');
+    if (mode === 'scoreDesc') return b.average - a.average;
+    if (mode === 'scoreAsc') return a.average - b.average;
+    if (mode === 'level') {
+      const d = levels.indexOf(a.level) - levels.indexOf(b.level);
+      return d !== 0 ? d : a.name.localeCompare(b.name, 'th');
+    }
+    if (mode === 'dutyDay') {
+      const d = days.indexOf(a.dutyDay) - days.indexOf(b.dutyDay);
+      return d !== 0 ? d : a.name.localeCompare(b.name, 'th');
+    }
+    return 0;
+  });
+  Exporter.selected = items.map(function (i) { return i.key; });
+};
+
+Exporter.render = function () {
+  Exporter.renderAvailable();
+  Exporter.renderSelected();
+};
+
+Exporter.renderAvailable = function () {
+  const selected = {};
+  Exporter.selected.forEach(function (k) { selected[k] = true; });
+  const list = Exporter.filtered();
+
+  $('availableList').innerHTML = list.length ? list.map(function (c) {
+    return '<label class="pick-item">' +
+      '<input type="checkbox" ' + (selected[c.key] ? 'checked' : '') + ' onchange="Exporter.toggle(\'' + jsAttr(c.key) + '\',this.checked)">' +
+      '<span class="grow"><span class="name">' + esc(c.name) + '</span>' +
+        '<span class="meta">' + esc(c.level || 'ไม่ระบุระดับชั้น') + ' · เวร' + esc(c.dutyDay || '-') +
+        (c.evaluated ? ' · เฉลี่ย ' + num(c.average) + ' (' + esc(c.rating) + ')' : ' · ยังไม่ได้รับการประเมิน') +
+        (c.retired ? ' · ไม่อยู่ในทะเบียนครูแล้ว' : '') + '</span></span>' +
+      (c.evaluated ? '<span class="badge ' + ratingClass(c.rating) + '">' + num(c.average) + '</span>'
+        : '<span class="badge badge--muted">—</span>') +
+    '</label>';
+  }).join('') : emptyState('🔍', 'ไม่พบรายชื่อตามเงื่อนไข');
+};
+
+Exporter.renderSelected = function () {
+  const items = Exporter.selected.map(Exporter.byKey).filter(Boolean);
+  $('selCount').textContent = items.length;
+
+  $('selectedList').innerHTML = items.length ? items.map(function (c, i) {
+    return '<div class="pick-item" draggable="true" data-key="' + esc(c.key) + '">' +
+      '<span class="grip">⠿</span>' +
+      '<span class="order-no">' + (i + 1) + '</span>' +
+      '<span class="grow"><span class="name">' + esc(c.name) + '</span>' +
+        '<span class="meta">' + esc(c.level || '-') + ' · เวร' + esc(c.dutyDay || '-') +
+        (c.evaluated ? ' · ' + num(c.average) : ' · ยังไม่ประเมิน') + '</span></span>' +
+      '<button class="icon-btn" title="เลื่อนขึ้น" onclick="Exporter.move(' + i + ',-1)">▲</button>' +
+      '<button class="icon-btn" title="เลื่อนลง" onclick="Exporter.move(' + i + ',1)">▼</button>' +
+      '<button class="icon-btn" title="นำออก" onclick="Exporter.toggle(\'' + jsAttr(c.key) + '\',false)">✕</button>' +
+    '</div>';
+  }).join('') : emptyState('👈', 'ยังไม่ได้เลือกผู้ถูกประเมิน', 'เลือกจากรายชื่อทางซ้าย');
+
+  // ลากเพื่อจัดลำดับ
+  Array.prototype.slice.call($('selectedList').querySelectorAll('.pick-item[draggable]')).forEach(function (el) {
+    el.ondragstart = function (e) {
+      Exporter.dragKey = el.dataset.key;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    };
+    el.ondragend = function () {
+      el.classList.remove('dragging');
+      Array.prototype.slice.call($('selectedList').querySelectorAll('.pick-item')).forEach(function (x) {
+        x.classList.remove('drag-over');
+      });
+    };
+    el.ondragover = function (e) { e.preventDefault(); el.classList.add('drag-over'); };
+    el.ondragleave = function () { el.classList.remove('drag-over'); };
+    el.ondrop = function (e) {
+      e.preventDefault();
+      const from = Exporter.selected.indexOf(Exporter.dragKey);
+      const to = Exporter.selected.indexOf(el.dataset.key);
+      if (from === -1 || to === -1 || from === to) return;
+      Exporter.selected.splice(to, 0, Exporter.selected.splice(from, 1)[0]);
+      Exporter.sortBy = 'custom';
+      $('sortPreset').value = 'custom';
+      Exporter.renderSelected();
+    };
+  });
+};
+
+Exporter.toggle = function (key, checked) {
+  const index = Exporter.selected.indexOf(key);
+  if (checked && index === -1) Exporter.selected.push(key);
+  if (!checked && index !== -1) Exporter.selected.splice(index, 1);
+  Exporter.render();
+};
+
+Exporter.move = function (index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= Exporter.selected.length) return;
+  const tmp = Exporter.selected[index];
+  Exporter.selected[index] = Exporter.selected[target];
+  Exporter.selected[target] = tmp;
+  Exporter.sortBy = 'custom';
+  $('sortPreset').value = 'custom';
+  Exporter.renderSelected();
+};
+
+Exporter.payload = function (formats) {
+  return {
+    year: Exporter.term.year,
+    semester: Exporter.term.semester,
+    teacherIds: Exporter.selected,
+    sortBy: 'custom',                       // ลำดับถูกจัดเรียบร้อยแล้วจากหน้าจอ
+    includeArchive: $('optIncludeArchive').checked,
+    formats: formats || [],
+    options: {
+      title: $('optTitle').value.trim(),
+      note: $('optNote').value.trim(),
+      orientation: $('optOrientation').value,
+      detail: $('optDetail').checked,
+      comments: $('optComments').checked,
+      rawList: $('optRawList').checked
+    }
+  };
+};
+
+/** ประมวลผลเพื่อดูตัวอย่างก่อนส่งออกจริง */
+Exporter.preview = async function (button) {
+  if (!Exporter.selected.length) { toast('กรุณาเลือกผู้ถูกประเมินอย่างน้อย 1 คน', 'warn'); return; }
+  try {
+    const data = await apiWithButton(button, 'apiPreviewExport', App.session.token, Exporter.payload());
+    const s = data.stats;
+    $('previewArea').innerHTML =
+      '<div class="card">' +
+        '<div class="card__head"><h3>👁️ ตัวอย่างรายงาน</h3><div class="spacer"></div>' +
+          '<span class="badge badge--brand">' + s.selected + ' คน</span>' +
+          '<span class="badge badge--ok">ประเมินแล้ว ' + s.evaluated + '</span>' +
+          (s.notEvaluated ? '<span class="badge badge--warn">ยังไม่ประเมิน ' + s.notEvaluated + '</span>' : '') +
+          '<span class="badge badge--muted">เฉลี่ยรวม ' + num(s.average) + '</span>' +
+        '</div>' +
+        '<div class="table-wrap scroll-y" style="max-height:460px"><table><thead><tr>' +
+          '<th class="num">ลำดับ</th><th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>เวรประจำวัน</th><th>บทบาทในเวร</th>' +
+          '<th class="num">รอง ผอ.</th><th class="num">หน.กิจการฯ</th><th class="num">หน.ระดับ</th><th class="num">หน.เวร</th>' +
+          '<th class="num">เฉลี่ย</th><th>ระดับ</th><th class="num">ครั้ง</th></tr></thead><tbody>' +
+          data.rows.map(function (r, i) {
+            const dash = function (v) { return v === null || v === undefined ? '-' : num(v); };
+            return '<tr><td class="num">' + (i + 1) + '</td><td><b>' + esc(r.name) + '</b></td>' +
+              '<td>' + esc(r.level || '-') + '</td><td>' + esc(r.dutyDay || '-') + '</td>' +
+              '<td class="small">' + esc(r.dutyPosition || '-') + '</td>' +
+              '<td class="num">' + dash(r.viceDirector) + '</td><td class="num">' + dash(r.headAffairs) + '</td>' +
+              '<td class="num">' + dash(r.headLevel) + '</td><td class="num">' + dash(r.headDuty) + '</td>' +
+              '<td class="num"><b>' + (r.count ? num(r.average) : '-') + '</b></td>' +
+              '<td>' + (r.count ? '<span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span>'
+                : '<span class="badge badge--muted">ยังไม่ประเมิน</span>') + '</td>' +
+              '<td class="num">' + r.count + '</td></tr>';
+          }).join('') + '</tbody></table></div>' +
+      '</div>';
+    $('previewArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+/** ส่งออกไฟล์จริง */
+Exporter.exportReport = async function (formats, button) {
+  if (!Exporter.selected.length) { toast('กรุณาเลือกผู้ถูกประเมินอย่างน้อย 1 คน', 'warn'); return; }
+  $('fileArea').innerHTML = '<div class="card"><div class="inline"><span class="spinner spinner--dark"></span>' +
+    '<span>กำลังสร้างไฟล์รายงาน อาจใช้เวลาประมาณ 10-30 วินาที...</span></div></div>';
+
+  try {
+    const data = await apiWithButton(button, 'apiExportReport', App.session.token, Exporter.payload(formats));
+    $('fileArea').innerHTML =
+      '<div class="card">' +
+        '<div class="card__head"><h3>✅ ไฟล์รายงานพร้อมใช้งาน</h3><div class="spacer"></div>' +
+          '<span class="badge badge--ok">' + data.count + ' คน · ' + esc(data.term) + '</span></div>' +
+        data.files.map(function (f, i) {
+          return '<div class="file-card">' +
+            '<div class="fi ' + f.format + '">' + (f.format === 'xlsx' ? '📊' : '📄') + '</div>' +
+            '<div style="flex:1;min-width:180px"><div class="fname">' + esc(f.name) + '</div>' +
+              '<div class="fmeta">' + esc(f.sizeText) + ' · บันทึกไว้ใน Google Drive โฟลเดอร์ "รายงานผลการประเมินครู"</div></div>' +
+            (f.base64 ? '<button class="btn btn--sm" onclick="Exporter.download(' + i + ')">⬇️ ดาวน์โหลด</button>' : '') +
+            '<a class="btn btn--ghost btn--sm" href="' + esc(f.url) + '" target="_blank" rel="noopener">🔗 เปิดใน Drive</a>' +
+          '</div>';
+        }).join('') +
+        '<p class="small muted">💡 หากปุ่มดาวน์โหลดไม่ทำงาน (บางเบราว์เซอร์บล็อกการดาวน์โหลดในหน้าต่างซ้อน) ' +
+        'ให้กด "เปิดใน Drive" แล้วดาวน์โหลดจากที่นั่นแทน</p>' +
+      '</div>';
+    Exporter.files = data.files;
+    toast('ส่งออกรายงานเรียบร้อย', 'ok');
+    $('fileArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    $('fileArea').innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' + esc(err.message) + '</span></div>';
+    toast(err.message, 'danger');
+  }
+};
+
+Exporter.download = function (index) {
+  const f = Exporter.files[index];
+  if (!f || !f.base64) { toast('ไฟล์ใหญ่เกินกว่าจะดาวน์โหลดตรงนี้ กรุณาเปิดจาก Drive', 'warn'); return; }
+  if (!downloadBase64(f.base64, f.name, f.mimeType)) {
+    toast('เบราว์เซอร์ไม่อนุญาตให้ดาวน์โหลดจากหน้าต่างนี้ กรุณากด "เปิดใน Drive"', 'warn', 8000);
+  }
+};
+
+/** สรุปผลลงชีทในไฟล์เดียวกัน */
+Exporter.generateSummary = async function (button) {
+  if (!Exporter.selected.length) { toast('กรุณาเลือกผู้ถูกประเมินอย่างน้อย 1 คน', 'warn'); return; }
+  try {
+    const res = await rpc('apiGenerateSummary', App.session.token, Exporter.payload());
+    if (!res.success) throw new Error(res.message);
+    toast(res.message, 'ok', 7000);
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+</script>

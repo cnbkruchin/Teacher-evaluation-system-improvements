@@ -1,0 +1,526 @@
+<script>
+/* ============================================================
+   AppJs — แกนกลางฝั่งหน้าจอ: การเรียก API, เซสชัน, แจ้งเตือน, เส้นทางหน้า
+   ============================================================ */
+
+const App = {
+  session: null,
+  boot: null,
+  clientId: null,
+  currentPage: null,
+  pages: {},
+  cache: {}
+};
+
+/* ---------- ตัวช่วยพื้นฐาน ---------- */
+
+/** หนีอักขระ HTML ทุกครั้งที่นำข้อมูลผู้ใช้มาแสดง (กัน XSS) */
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * หนีอักขระสำหรับค่าที่ต้องวางไว้ใน "สตริงจาวาสคริปต์ภายในแอตทริบิวต์ HTML"
+ * เช่น onclick="fn('...')" — ต้องหนีทั้งระดับจาวาสคริปต์และระดับ HTML
+ * (การใช้ esc() อย่างเดียวไม่พอ เพราะเบราว์เซอร์จะถอดรหัส &#39; กลับเป็น ' ก่อนรันสคริปต์)
+ */
+function jsAttr(v) {
+  if (v === null || v === undefined) return '';
+  return esc(String(v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/[\r\n]+/g, ' '));
+}
+
+function $(id) { return document.getElementById(id); }
+function num(v, digits) {
+  const n = Number(v);
+  return isNaN(n) ? '-' : n.toFixed(digits === undefined ? 2 : digits);
+}
+function ratingClass(rating) {
+  switch (rating) {
+    case 'ดีเยี่ยม': return 'r-excellent';
+    case 'ดีมาก': return 'r-great';
+    case 'ดี': return 'r-good';
+    case 'พอใช้': return 'r-fair';
+    case 'ปรับปรุง': return 'r-improve';
+    default: return 'r-none';
+  }
+}
+function debounce(fn, ms) {
+  let t;
+  return function () {
+    const args = arguments, ctx = this;
+    clearTimeout(t);
+    t = setTimeout(function () { fn.apply(ctx, args); }, ms || 300);
+  };
+}
+
+/** รหัสอุปกรณ์สำหรับจำกัดจำนวนครั้งการล็อกอินผิดแบบรายเครื่อง */
+function clientId() {
+  try {
+    let id = localStorage.getItem('tes_client_id');
+    if (!id) {
+      id = 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('tes_client_id', id);
+    }
+    return id;
+  } catch (e) {
+    return 'nostorage';
+  }
+}
+
+/* ---------- การเรียกฟังก์ชันฝั่งเซิร์ฟเวอร์ ---------- */
+
+function rpc(fnName) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve, reject) {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (err) { reject(new Error(err && err.message ? err.message : 'เชื่อมต่อระบบไม่สำเร็จ')); })
+      [fnName].apply(null, args);
+  });
+}
+
+/**
+ * เรียก API พร้อมจัดการข้อผิดพลาดมาตรฐาน
+ * คืนค่า data เมื่อสำเร็จ, โยน error เมื่อไม่สำเร็จ
+ */
+async function api(fnName) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  const res = await rpc.apply(null, [fnName].concat(args));
+  if (!res || res.success !== true) {
+    const message = (res && res.message) ? res.message : 'ดำเนินการไม่สำเร็จ';
+    if (/เซสชันหมดอายุ|ไม่มีสิทธิ์เข้าถึง/.test(message)) {
+      App.handleSessionExpired();
+    }
+    const err = new Error(message);
+    err.code = res && res.code;
+    throw err;
+  }
+  return res.data !== undefined ? res.data : res;
+}
+
+/** เรียก API แบบมีตัวโหลดที่ปุ่ม */
+async function apiWithButton(button, fnName) {
+  const args = Array.prototype.slice.call(arguments, 2);
+  const original = button ? button.innerHTML : '';
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner"></span> กำลังดำเนินการ...';
+  }
+  try {
+    return await api.apply(null, [fnName].concat(args));
+  } finally {
+    if (button) { button.disabled = false; button.innerHTML = original; }
+  }
+}
+
+/* ---------- แจ้งเตือน ---------- */
+
+function toast(message, type, timeout) {
+  const host = $('toasts');
+  const div = document.createElement('div');
+  div.className = 'toast toast--' + (type || 'info');
+  const icon = type === 'ok' ? '✅' : type === 'danger' ? '❌' : type === 'warn' ? '⚠️' : 'ℹ️';
+  div.innerHTML = '<span>' + icon + '</span><span style="flex:1">' + esc(message).replace(/\n/g, '<br>') +
+    '</span><span class="x">✕</span>';
+  div.querySelector('.x').onclick = function () { div.remove(); };
+  host.appendChild(div);
+  setTimeout(function () { div.remove(); }, timeout || (type === 'danger' ? 8000 : 4500));
+}
+
+/* ---------- โมดัล ---------- */
+
+function modal(options) {
+  const o = options || {};
+  const host = $('modalHost');
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML =
+    '<div class="modal ' + (o.wide ? 'modal--wide' : '') + '">' +
+      '<div class="modal__head"><h3>' + esc(o.title || '') + '</h3>' +
+        '<button class="icon-btn" data-close>✕</button></div>' +
+      '<div class="modal__body">' + (o.body || '') + '</div>' +
+      (o.footer === null ? '' : '<div class="modal__foot">' + (o.footer || '') + '</div>') +
+    '</div>';
+  host.appendChild(wrap);
+
+  const close = function () { wrap.remove(); if (o.onClose) o.onClose(); };
+  wrap.querySelectorAll('[data-close]').forEach(function (b) { b.onclick = close; });
+  wrap.onclick = function (e) { if (e.target === wrap && o.dismissible !== false) close(); };
+  if (o.onOpen) o.onOpen(wrap, close);
+  return { element: wrap, close: close };
+}
+
+function confirmDialog(options) {
+  const o = options || {};
+  return new Promise(function (resolve) {
+    const m = modal({
+      title: o.title || 'ยืนยันการดำเนินการ',
+      body: '<p style="font-size:14px;white-space:pre-line">' + esc(o.message || '') + '</p>' +
+        (o.warning ? '<div class="alert alert--warn" style="margin-top:14px"><span>⚠️</span><span>' + esc(o.warning) + '</span></div>' : ''),
+      footer: '<button class="btn btn--ghost" data-cancel>ยกเลิก</button>' +
+        '<button class="btn ' + (o.danger ? 'btn--danger' : '') + '" data-ok>' + esc(o.confirmText || 'ยืนยัน') + '</button>',
+      dismissible: false,
+      onOpen: function (wrap, close) {
+        wrap.querySelector('[data-cancel]').onclick = function () { close(); resolve(false); };
+        wrap.querySelector('[data-ok]').onclick = function () { close(); resolve(true); };
+      }
+    });
+    m.element.querySelector('[data-close]').onclick = function () { m.close(); resolve(false); };
+  });
+}
+
+/* ---------- โหมดสี ---------- */
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem('tes_theme', theme); } catch (e) { /* ไม่รองรับ */ }
+}
+App.toggleTheme = function () {
+  const now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(now);
+};
+
+/* ---------- ดาวน์โหลดไฟล์ ---------- */
+
+function downloadBase64(base64, filename, mime) {
+  try {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* ---------- เซสชัน ---------- */
+
+function saveToken(token) {
+  try { sessionStorage.setItem('tes_token', token); } catch (e) { /* ไม่รองรับ */ }
+}
+function loadToken() {
+  try { return sessionStorage.getItem('tes_token') || ''; } catch (e) { return ''; }
+}
+function clearToken() {
+  try { sessionStorage.removeItem('tes_token'); } catch (e) { /* ไม่รองรับ */ }
+}
+
+App.handleSessionExpired = function () {
+  clearToken();
+  App.session = null;
+  $('shell').classList.add('hidden');
+  $('loginView').classList.remove('hidden');
+  toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', 'warn');
+};
+
+App.logout = async function () {
+  const yes = await confirmDialog({ title: 'ออกจากระบบ', message: 'ต้องการออกจากระบบใช่หรือไม่?', confirmText: 'ออกจากระบบ' });
+  if (!yes) return;
+  try { await rpc('apiLogout', App.session ? App.session.token : loadToken()); } catch (e) { /* ออกได้แม้เรียกไม่สำเร็จ */ }
+  clearToken();
+  App.session = null;
+  location.reload();
+};
+
+/* ---------- หน้าเข้าสู่ระบบ ---------- */
+
+App.switchLoginTab = function (kind) {
+  const isAdmin = kind === 'admin';
+  $('tabAdmin').classList.toggle('active', isAdmin);
+  $('tabEvaluator').classList.toggle('active', !isAdmin);
+  $('formAdmin').classList.toggle('hidden', !isAdmin);
+  $('formEvaluator').classList.toggle('hidden', isAdmin);
+  $('loginAlert').innerHTML = '';
+  setTimeout(function () { $(isAdmin ? 'adminPass' : 'evalPass').focus(); }, 60);
+};
+
+function loginAlert(message, type) {
+  $('loginAlert').innerHTML = '<div class="alert alert--' + (type || 'danger') + '">' +
+    '<span>' + (type === 'ok' ? '✅' : '⚠️') + '</span><span>' + esc(message).replace(/\n/g, '<br>') + '</span></div>';
+}
+
+App.loginEvaluator = async function (event) {
+  event.preventDefault();
+  const useList = App.boot && App.boot.showEvaluatorList;
+  const name = useList ? $('evalName').value : $('evalNameText').value.trim();
+  const pass = $('evalPass').value;
+  if (!name) { loginAlert('กรุณาระบุชื่อผู้ประเมิน'); return; }
+  if (!pass) { loginAlert('กรุณากรอกรหัสผ่าน'); return; }
+
+  const btn = $('btnEvaluatorLogin');
+  try {
+    const data = await apiWithButton(btn, 'apiEvaluatorLogin', name, pass);
+    saveToken(data.token);
+    App.session = data;
+    App.startApp();
+  } catch (err) {
+    loginAlert(err.message);
+    $('evalPass').value = '';
+  }
+};
+
+App.loginAdmin = async function (event) {
+  event.preventDefault();
+  const pass = $('adminPass').value;
+  if (!pass) { loginAlert('กรุณากรอกรหัสผ่าน'); return; }
+
+  const btn = $('btnAdminLogin');
+  try {
+    const data = await apiWithButton(btn, 'apiAdminLogin', pass, App.clientId);
+    saveToken(data.token);
+    App.session = data;
+    App.startApp();
+  } catch (err) {
+    loginAlert(err.message);
+    $('adminPass').value = '';
+  }
+};
+
+/* ---------- กู้คืนรหัสผ่านผู้ดูแลระบบ ---------- */
+
+App.openRecovery = function () {
+  modal({
+    title: '🆘 ลืมรหัสผ่านผู้ดูแลระบบ',
+    body:
+      '<div id="recStep1">' +
+        '<p style="font-size:13.5px;margin-bottom:14px">ระบบจะส่งรหัสยืนยัน 6 หลักไปยัง<b>อีเมลกู้คืน</b>ที่ตั้งค่าไว้ ' +
+        'จากนั้นท่านจะตั้งรหัสผ่านใหม่ได้ทันที</p>' +
+        '<div class="alert alert--info"><span>💡</span><span>หากยังไม่ได้ตั้งอีเมลกู้คืน หรือเข้าอีเมลไม่ได้ ' +
+        'ให้เจ้าของไฟล์ Google Sheets ใช้เมนู <b>🏫 ระบบประเมินผล → 🆘 ลืมรหัสผ่านผู้ดูแลระบบ</b> เพื่อรีเซ็ตรหัสผ่านแทน</span></div>' +
+        '<div id="recAlert1"></div>' +
+        '<button class="btn btn--block" id="btnSendOtp">📧 ส่งรหัสยืนยันไปยังอีเมลกู้คืน</button>' +
+      '</div>' +
+      '<div id="recStep2" class="hidden">' +
+        '<div class="alert alert--ok"><span>📧</span><span id="recSentTo"></span></div>' +
+        '<div class="field"><label>รหัสยืนยัน 6 หลัก</label>' +
+          '<input type="text" id="recOtp" maxlength="6" inputmode="numeric" placeholder="000000" ' +
+          'style="letter-spacing:8px;text-align:center;font-size:22px;font-weight:700"></div>' +
+        '<div class="field"><label>รหัสผ่านใหม่</label>' +
+          '<input type="password" id="recNewPass" placeholder="อย่างน้อย 8 ตัว มีตัวอักษรและตัวเลข" oninput="App.showStrength(this.value,\'recStrength\')">' +
+          '<div class="strength"><div id="recStrength"></div></div></div>' +
+        '<div class="field"><label>ยืนยันรหัสผ่านใหม่</label>' +
+          '<input type="password" id="recConfirmPass" placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"></div>' +
+        '<div id="recAlert2"></div>' +
+        '<button class="btn btn--block" id="btnVerifyOtp">🔐 ตั้งรหัสผ่านใหม่</button>' +
+      '</div>',
+    footer: '<button class="btn btn--ghost" data-close>ปิด</button>',
+    onOpen: function (wrap, close) {
+      wrap.querySelector('#btnSendOtp').onclick = async function () {
+        try {
+          const data = await apiWithButton(this, 'apiRequestAdminRecovery', App.clientId);
+          wrap.querySelector('#recStep1').classList.add('hidden');
+          wrap.querySelector('#recStep2').classList.remove('hidden');
+          wrap.querySelector('#recSentTo').textContent =
+            'ส่งรหัสยืนยันไปที่ ' + data.maskedEmail + ' แล้ว (ใช้ได้ภายใน ' + data.expiresInMinutes + ' นาที)';
+          wrap.querySelector('#recOtp').focus();
+        } catch (err) {
+          wrap.querySelector('#recAlert1').innerHTML =
+            '<div class="alert alert--danger"><span>⚠️</span><span>' + esc(err.message).replace(/\n/g, '<br>') + '</span></div>';
+        }
+      };
+      wrap.querySelector('#btnVerifyOtp').onclick = async function () {
+        const otp = wrap.querySelector('#recOtp').value.trim();
+        const pass = wrap.querySelector('#recNewPass').value;
+        const confirm = wrap.querySelector('#recConfirmPass').value;
+        const alertBox = wrap.querySelector('#recAlert2');
+        alertBox.innerHTML = '';
+        if (otp.length !== 6) { alertBox.innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>กรุณากรอกรหัสยืนยัน 6 หลัก</span></div>'; return; }
+        if (pass !== confirm) { alertBox.innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน</span></div>'; return; }
+        try {
+          await apiWithButton(this, 'apiVerifyAdminRecovery', otp, pass);
+          close();
+          toast('ตั้งรหัสผ่านใหม่เรียบร้อย กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่', 'ok', 8000);
+          App.switchLoginTab('admin');
+        } catch (err) {
+          alertBox.innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' + esc(err.message) + '</span></div>';
+        }
+      };
+    }
+  });
+};
+
+/** แสดงระดับความแข็งแรงของรหัสผ่าน */
+App.showStrength = function (password, elementId) {
+  const bar = $(elementId);
+  if (!bar) return;
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
+  if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) score++;
+  const colors = ['#dc2626', '#d97706', '#eab308', '#16a34a', '#15803d'];
+  bar.style.width = (score / 4 * 100) + '%';
+  bar.style.background = colors[score];
+};
+
+/* ---------- โครงหน้าจอหลัก ---------- */
+
+App.NAV = {
+  admin: [
+    { group: 'ภาพรวม' },
+    { id: 'dashboard', icon: '📊', label: 'แดชบอร์ด' },
+    { id: 'results', icon: '📋', label: 'ผลการประเมิน' },
+    { id: 'export', icon: '📤', label: 'ประมวลผลและส่งออก' },
+    { id: 'archive', icon: '🗄️', label: 'คลังข้อมูลย้อนหลัง' },
+    { group: 'ข้อมูลหลัก' },
+    { id: 'teachers', icon: '🧑‍🏫', label: 'ครูผู้รับการประเมิน' },
+    { id: 'evaluators', icon: '👥', label: 'ผู้ประเมิน' },
+    { id: 'duty', icon: '📅', label: 'เวรประจำวันรายภาคเรียน' },
+    { id: 'criteria', icon: '📝', label: 'เกณฑ์การประเมิน' },
+    { group: 'ระบบ' },
+    { id: 'settings', icon: '⚙️', label: 'ตั้งค่าและความปลอดภัย' },
+    { id: 'logs', icon: '🕘', label: 'ประวัติการใช้งาน' }
+  ],
+  evaluator: [
+    { group: 'งานของฉัน' },
+    { id: 'evaluate', icon: '📝', label: 'แบบประเมิน' },
+    { id: 'myHistory', icon: '📋', label: 'ผลที่ฉันประเมินแล้ว' },
+    { id: 'myDuty', icon: '📅', label: 'ตารางเวรประจำวัน' },
+    { group: 'บัญชีของฉัน' },
+    { id: 'myPassword', icon: '🔑', label: 'เปลี่ยนรหัสผ่าน' }
+  ]
+};
+
+App.startApp = function () {
+  const s = App.session;
+  $('loginView').classList.add('hidden');
+  $('shell').classList.remove('hidden');
+
+  $('sideRole').textContent = s.kind === 'admin' ? 'ผู้ดูแลระบบ' : (s.role || 'ผู้ประเมิน');
+  $('sideUser').textContent = '👤 ' + s.name;
+  $('sideVersion').textContent = 'เวอร์ชัน ' + (s.version || (App.boot && App.boot.version) || '');
+
+  const nav = App.NAV[s.kind] || [];
+  $('sideNav').innerHTML = nav.map(function (item) {
+    if (item.group) return '<div class="group">' + esc(item.group) + '</div>';
+    return '<button class="navlink" data-page="' + item.id + '" onclick="App.go(\'' + item.id + '\')">' +
+      '<span class="ico">' + item.icon + '</span><span>' + esc(item.label) + '</span></button>';
+  }).join('');
+
+  const first = nav.filter(function (i) { return i.id; })[0];
+  App.go(first ? first.id : 'dashboard');
+
+  if (s.kind === 'evaluator' && s.mustChangePassword) {
+    setTimeout(function () {
+      toast('ท่านใช้รหัสผ่านที่ระบบออกให้ กรุณาเปลี่ยนรหัสผ่านเพื่อความปลอดภัย', 'warn', 9000);
+      App.go('myPassword');
+    }, 700);
+  }
+};
+
+App.go = function (pageId) {
+  const nav = (App.NAV[App.session.kind] || []).filter(function (i) { return i.id === pageId; })[0];
+  if (!nav) return;
+
+  App.currentPage = pageId;
+  document.querySelectorAll('.navlink').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.page === pageId);
+  });
+  $('pageTitle').innerHTML = nav.icon + ' ' + esc(nav.label);
+  $('sidebar').classList.remove('open');
+
+  const container = $('pageContent');
+  container.innerHTML = '<div class="card"><div class="skeleton" style="width:40%"></div>' +
+    '<div class="skeleton"></div><div class="skeleton" style="width:75%"></div></div>';
+
+  const renderer = App.pages[pageId];
+  if (!renderer) { container.innerHTML = '<div class="empty"><div class="ico">🚧</div>ยังไม่พร้อมใช้งาน</div>'; return; }
+
+  Promise.resolve(renderer(container)).catch(function (err) {
+    container.innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' +
+      esc(err.message) + '</span></div>' +
+      '<button class="btn btn--ghost" onclick="App.go(\'' + pageId + '\')">🔄 ลองใหม่</button>';
+  });
+};
+
+App.toggleSidebar = function () { $('sidebar').classList.toggle('open'); };
+
+App.setTermBadge = function (year, semester) {
+  $('termBadge').textContent = year ? ('📅 ภาคเรียนที่ ' + semester + '/' + year) : '';
+};
+
+/* ---------- ตัวช่วยสร้าง HTML ที่ใช้ซ้ำ ---------- */
+
+function optionsHtml(list, selected, mapper) {
+  return list.map(function (item) {
+    const value = mapper ? mapper(item).value : item;
+    const label = mapper ? mapper(item).label : item;
+    return '<option value="' + esc(value) + '"' + (String(value) === String(selected) ? ' selected' : '') + '>' +
+      esc(label) + '</option>';
+  }).join('');
+}
+
+function emptyState(icon, text, hint) {
+  return '<div class="empty"><div class="ico">' + icon + '</div><div>' + esc(text) + '</div>' +
+    (hint ? '<div class="small" style="margin-top:6px">' + esc(hint) + '</div>' : '') + '</div>';
+}
+
+function termFilterHtml(data, onChange) {
+  return '<div class="field"><label>ปีการศึกษา</label>' +
+      '<select id="fYear" onchange="' + onChange + '">' + optionsHtml(data.years, data.year) + '</select></div>' +
+    '<div class="field"><label>ภาคเรียน</label>' +
+      '<select id="fSemester" onchange="' + onChange + '">' +
+      optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) +
+      '</select></div>';
+}
+
+/* ---------- เริ่มทำงาน ---------- */
+
+(async function init() {
+  try { applyTheme(localStorage.getItem('tes_theme') || 'light'); } catch (e) { applyTheme('light'); }
+  App.clientId = clientId();
+
+  try {
+    const boot = await api('apiBootstrap');
+    App.boot = boot;
+    $('loginTitle').textContent = boot.appName;
+    $('loginSubtitle').textContent = boot.organization + ' · ' + boot.subtitle;
+    $('loginVersion').textContent = 'เวอร์ชัน ' + boot.version;
+    App.setTermBadge(boot.currentYear, boot.currentSemester);
+
+    if (!boot.installed) {
+      loginAlert('ยังไม่ได้ติดตั้งระบบ\nกรุณาเปิดไฟล์ Google Sheets แล้วเลือกเมนู "🏫 ระบบประเมินผล → ⚙️ ติดตั้ง / อัปเกรดระบบ"', 'warn');
+      return;
+    }
+
+    if (boot.showEvaluatorList) {
+      $('evalName').innerHTML = '<option value="">-- เลือกชื่อของท่าน --</option>' +
+        boot.evaluators.map(function (e) {
+          return '<option value="' + esc(e.name) + '">' + esc(e.name) +
+            ' (' + esc(e.role) + (e.scope ? ' - ' + esc(e.scope) : '') + ')</option>';
+        }).join('');
+    } else {
+      $('evalName').classList.add('hidden');
+      $('evalNameText').classList.remove('hidden');
+    }
+
+    // เข้าสู่ระบบอยู่แล้ว (เช่น เผลอรีเฟรชหน้า) ให้กลับเข้าหน้าเดิมได้ทันที
+    const token = loadToken();
+    if (token) {
+      try {
+        const session = await api('apiSession', token);
+        App.session = Object.assign({ token: token }, session);
+        App.startApp();
+      } catch (e) {
+        clearToken();
+      }
+    }
+  } catch (err) {
+    loginAlert('เชื่อมต่อระบบไม่สำเร็จ: ' + err.message);
+  }
+})();
+</script>
