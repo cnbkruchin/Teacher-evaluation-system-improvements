@@ -31,7 +31,7 @@ App.pages.dashboard = async function (container) {
   const yearOptions = optionsHtml(['all'].concat(data.filters.years), data.filters.year,
     function (y) { return { value: y, label: y === 'all' ? 'ทุกปีการศึกษา' : 'ปีการศึกษา ' + y }; });
   const semesterOptions = optionsHtml(['all'].concat(data.filters.semesters), data.filters.semester,
-    function (x) { return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; });
+    function (x) { return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : semesterLabel(x) }; });
 
   container.innerHTML =
     '<div class="filters">' +
@@ -65,8 +65,8 @@ App.pages.dashboard = async function (container) {
     '</div>' +
 
     '<div class="card"><div class="card__head"><h3>🚦 ความคืบหน้าของผู้ประเมิน</h3>' +
-      '<div class="spacer"></div><span class="small muted">ภาคเรียนที่ ' +
-      esc(data.currentTerm.semester + '/' + data.currentTerm.year) + '</span></div>' +
+      '<div class="spacer"></div><span class="small muted">' +
+      esc(semesterLabel(data.currentTerm.semester) + '/' + data.currentTerm.year) + '</span></div>' +
       (data.progress.length ? '<div class="table-wrap scroll-y"><table><thead><tr>' +
         '<th>ผู้ประเมิน</th><th>บทบาท</th><th class="num">ประเมินแล้ว</th><th style="width:180px">ความคืบหน้า</th>' +
         '</tr></thead><tbody>' +
@@ -115,13 +115,22 @@ Admin.rankTable = function (rows) {
     }).join('') + '</tbody></table></div>';
 };
 
-Admin.drawDashboardCharts = function (data) {
-  if (typeof Chart === 'undefined') return;
+Admin.drawDashboardCharts = async function (data) {
+  const ready = await ensureChartJs();
+  if (!ready || typeof Chart === 'undefined') {
+    document.querySelectorAll('.chart-box').forEach(function (box) {
+      box.innerHTML = '<div class="empty small">ไม่สามารถโหลดกราฟได้ (ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต)</div>';
+    });
+    return;
+  }
+  if (!document.getElementById('chartRating')) return;   // ผู้ใช้เปลี่ยนหน้าไปแล้ว
   const font = Admin.chartFont();
   const color = Admin.textColor();
+  const smallScreen = window.innerWidth < 768;
   const common = {
     responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { position: 'bottom', labels: { font: font, color: color, boxWidth: 12 } } }
+    animation: smallScreen ? false : { duration: 500 },
+    plugins: { legend: { position: 'bottom', labels: { font: font, color: color, boxWidth: 12, padding: 10 } } }
   };
 
   const ratingLabels = Object.keys(data.ratingDistribution);
@@ -190,7 +199,7 @@ App.pages.results = async function (container) {
             return { value: y, label: y === 'all' ? 'ทุกปี' : y }; }) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="rSemester">' +
           optionsHtml(['all', '1', '2'], f.semester || 'all', function (x) {
-            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : semesterLabel(x) }; }) + '</select></div>' +
         '<div class="field"><label>ระดับชั้น</label><select id="rLevel">' +
           optionsHtml(['all', 'ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'], f.level || 'all', function (x) {
             return { value: x, label: x === 'all' ? 'ทุกระดับชั้น' : x }; }) + '</select></div>' +
@@ -242,7 +251,7 @@ Admin.viewResult = async function (id) {
     const d = await api('apiGetResult', App.session.token, id);
     modal({
       wide: true,
-      title: '📋 ' + d.teacher + ' — ภาคเรียนที่ ' + d.semester + '/' + d.year,
+      title: '📋 ' + d.teacher + ' — ' + semesterLabel(d.semester) + '/' + d.year,
       body:
         '<div class="grid grid-4" style="margin-bottom:16px">' +
           '<div class="stat"><div class="label">ผู้ประเมิน</div><div style="font-weight:700">' + esc(d.evaluator) + '</div>' +
@@ -314,7 +323,7 @@ App.pages.archive = async function (container) {
           optionsHtml(data.years, f.year || data.years[0]) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="arcSemester">' +
           optionsHtml(data.semesters, f.semester || '1', function (x) {
-            return { value: x, label: 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+            return { value: x, label: semesterLabel(x) }; }) + '</select></div>' +
         '<div class="field" style="flex:1;min-width:200px"><label>หมายเหตุ</label>' +
           '<input type="text" id="arcNote" placeholder="เช่น ปิดภาคเรียนที่ 1/2568"></div>' +
         '<button class="btn btn--warn" id="btnArchiveTerm">📦 จัดเก็บภาคเรียนนี้</button>' +
@@ -328,7 +337,7 @@ App.pages.archive = async function (container) {
             return { value: y, label: y === 'all' ? 'ทุกปี' : y }; }) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="aSemester">' +
           optionsHtml(['all'].concat(data.semesters), f.semester || 'all', function (x) {
-            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+            return { value: x, label: x === 'all' ? 'ทุกภาคเรียน' : semesterLabel(x) }; }) + '</select></div>' +
         '<div class="field"><label>ประเภทการจัดเก็บ</label><select id="aType">' +
           optionsHtml(['all'].concat(data.types), f.type || 'all', function (t) {
             return { value: t, label: t === 'all' ? 'ทุกประเภท' : t }; }) + '</select></div>' +
@@ -368,7 +377,7 @@ App.pages.archive = async function (container) {
     const year = $('arcYear').value, semester = $('arcSemester').value;
     const yes = await confirmDialog({
       title: '📦 จัดเก็บภาคเรียน',
-      message: 'ต้องการย้ายผลการประเมินของภาคเรียนที่ ' + semester + '/' + year + ' เข้าคลังข้อมูลใช่หรือไม่?',
+      message: 'ต้องการย้ายผลการประเมินของ ' + semesterLabel(semester) + '/' + year + ' เข้าคลังข้อมูลใช่หรือไม่?',
       warning: 'ผลการประเมินจะถูกย้ายออกจากตารางหลัก แต่ยังค้นย้อนหลัง ออกรายงาน และกู้คืนได้',
       confirmText: 'จัดเก็บ'
     });

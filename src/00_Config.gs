@@ -8,7 +8,7 @@
 const APP = {
   NAME: 'ระบบประเมินผลการปฏิบัติงานครู',
   SUBTITLE: 'กลุ่มบริหารงานกิจการนักเรียน',
-  VERSION: '3.0.0',
+  VERSION: '3.1.0',
   TIMEZONE: 'Asia/Bangkok'
 };
 
@@ -46,7 +46,13 @@ const LEVELS = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 const DAYS = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'];
 const PREFIXES = ['นาย', 'นาง', 'นางสาว', 'ว่าที่ ร.ต.', 'ว่าที่ ร.ต.หญิง', 'ดร.'];
 const DUTY_POSITIONS = ['หัวหน้าเวร', 'รองหัวหน้าเวร', 'กรรมการเวร'];
-const SEMESTERS = ['1', '2'];
+/** ภาคเรียนที่ระบบรองรับ (ผู้ดูแลระบบเลือกเปิด/ปิดได้ในเมนู "ปีการศึกษาและภาคเรียน") */
+const ALL_SEMESTERS = [
+  { value: '1', label: 'ภาคเรียนที่ 1' },
+  { value: '2', label: 'ภาคเรียนที่ 2' },
+  { value: '3', label: 'ภาคฤดูร้อน' }
+];
+const DEFAULT_SEMESTERS = ['1', '2'];
 
 /** เกณฑ์การประเมินเริ่มต้น (ผู้ดูแลระบบแก้ไข/เพิ่มได้ภายหลังผ่านชีท "เกณฑ์การประเมิน") */
 const DEFAULT_CRITERIA = [
@@ -96,6 +102,7 @@ const SETTING_KEYS = {
   CURRENT_YEAR: 'current_academic_year',
   CURRENT_SEMESTER: 'current_semester',
   ACADEMIC_YEARS: 'academic_years',
+  SEMESTERS: 'semesters',
   USE_WEIGHTS: 'use_criteria_weights',
   THRESHOLDS: 'rating_thresholds',
   PASSWORD_ITERATIONS: 'password_iterations',
@@ -119,6 +126,7 @@ const SETTING_DEFAULTS = {
   current_academic_year: '',
   current_semester: '1',
   academic_years: '',
+  semesters: '1,2',
   use_criteria_weights: 'ไม่',
   rating_thresholds: JSON.stringify(DEFAULT_THRESHOLDS),
   password_iterations: '4096',
@@ -145,6 +153,7 @@ const SETTING_DESCRIPTIONS = {
   current_academic_year: 'ปีการศึกษาปัจจุบัน เช่น 2568',
   current_semester: 'ภาคเรียนปัจจุบัน (1 หรือ 2)',
   academic_years: 'ปีการศึกษาที่เปิดใช้งาน คั่นด้วย , เช่น 2567,2568,2569',
+  semesters: 'ภาคเรียนที่เปิดใช้งาน คั่นด้วย , (1=ภาคเรียนที่ 1, 2=ภาคเรียนที่ 2, 3=ภาคฤดูร้อน)',
   use_criteria_weights: 'คิดคะแนนแบบถ่วงน้ำหนักตามคอลัมน์น้ำหนักหรือไม่ (ใช่/ไม่)',
   rating_thresholds: 'เกณฑ์ตัดระดับผลการประเมิน (JSON)',
   password_iterations: 'จำนวนรอบการเข้ารหัสรหัสผ่านผู้ประเมิน',

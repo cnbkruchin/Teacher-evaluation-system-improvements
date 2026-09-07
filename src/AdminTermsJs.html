@@ -1,0 +1,342 @@
+<script>
+/* ============================================================
+   AdminTermsJs — ปีการศึกษา/ภาคเรียน และการเคลียร์ข้อมูลการประเมิน
+   ============================================================ */
+
+/* ==================== ปีการศึกษาและภาคเรียน ==================== */
+
+App.pages.terms = async function (container) {
+  const data = await api('apiTermOverview', App.session.token);
+  Admin.cache.terms = data;
+  App.setTermBadge(data.currentYear, data.currentSemester);
+
+  container.innerHTML =
+    '<div class="grid grid-2">' +
+
+      '<div class="card"><div class="card__head"><h3>📆 ภาคเรียนที่ใช้งานอยู่</h3></div>' +
+        '<p class="card__desc">เลือกปีการศึกษาและภาคเรียนได้อย่างอิสระ — ค่านี้จะเป็นค่าเริ่มต้นของทุกหน้า ' +
+          'ทั้งแบบประเมิน ตารางเวร และการออกรายงาน</p>' +
+        '<div class="grid grid-2">' +
+          '<div class="field"><label>ปีการศึกษาปัจจุบัน</label>' +
+            '<select id="tCurYear">' + optionsHtml(data.years, data.currentYear) + '</select></div>' +
+          '<div class="field"><label>ภาคเรียนปัจจุบัน</label>' +
+            '<select id="tCurSem">' + optionsHtml(
+              data.semesterOptions.filter(function (s) { return s.enabled; }),
+              data.currentSemester,
+              function (s) { return { value: s.value, label: s.label }; }) + '</select></div>' +
+        '</div>' +
+        '<div class="btn-row">' +
+          '<button class="btn" id="btnSaveCurrentTerm">💾 บันทึกภาคเรียนปัจจุบัน</button>' +
+          '<button class="btn btn--ghost" id="btnUseSuggested">📅 ใช้ปีการศึกษา ' + esc(data.suggestedYear) + '</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card"><div class="card__head"><h3>🗓️ ปีการศึกษาที่เปิดใช้งาน</h3></div>' +
+        '<p class="card__desc">ปีที่อยู่ในรายการนี้จะปรากฏเป็นตัวเลือกทุกหน้า ' +
+          '(การลบออกจากรายการไม่ได้ลบข้อมูลการประเมิน)</p>' +
+        '<div class="inline" id="yearChips" style="margin-bottom:14px">' +
+          (data.configuredYears.length ? data.configuredYears.map(function (y) {
+            const isCurrent = y === data.currentYear;
+            return '<span class="badge ' + (isCurrent ? 'badge--ok' : 'badge--brand') + '" ' +
+              'style="padding:7px 12px;font-size:13px">' + esc(y) +
+              (isCurrent ? ' (ปัจจุบัน)' :
+                ' <button class="icon-btn" style="min-width:auto;min-height:auto;padding:0 3px;font-size:14px" ' +
+                'title="ลบออกจากรายการ" onclick="Terms.removeYear(\'' + jsAttr(y) + '\')">✕</button>') +
+              '</span>';
+          }).join('') : '<span class="muted small">ยังไม่ได้ตั้งค่า</span>') +
+        '</div>' +
+        '<div class="inline">' +
+          '<input type="text" id="newYear" placeholder="เช่น 2569" maxlength="4" inputmode="numeric" style="max-width:150px">' +
+          '<button class="btn btn--soft" id="btnAddYear">➕ เพิ่มปีการศึกษา</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card"><div class="card__head"><h3>📚 ภาคเรียนที่เปิดใช้งาน</h3></div>' +
+        '<p class="card__desc">เปิดเฉพาะภาคเรียนที่โรงเรียนใช้จริง เช่น เปิด "ภาคฤดูร้อน" เพิ่ม ' +
+          'หากมีการประเมินในช่วงซัมเมอร์</p>' +
+        data.semesterOptions.map(function (s) {
+          return '<label class="checkbox"><input type="checkbox" class="semOpt" value="' + esc(s.value) + '"' +
+            (s.enabled ? ' checked' : '') + '><span>' + esc(s.label) + '</span></label>';
+        }).join('') +
+        '<button class="btn" id="btnSaveSemesters" style="margin-top:10px">💾 บันทึกภาคเรียนที่เปิดใช้งาน</button>' +
+      '</div>' +
+
+      '<div class="card"><div class="card__head"><h3>ℹ️ คำแนะนำ</h3></div>' +
+        '<div class="alert alert--info"><span>💡</span><span>' +
+          '<b>เริ่มภาคเรียนใหม่อย่างไร</b><br>' +
+          '1. เพิ่มปีการศึกษา (ถ้าเป็นปีใหม่) แล้วตั้งเป็นภาคเรียนปัจจุบัน<br>' +
+          '2. ไปที่ <b>เวรประจำวันรายภาคเรียน</b> → คัดลอกตารางเวรจากภาคเรียนก่อน แล้วปรับให้ตรงกับของจริง<br>' +
+          '3. แจ้งผู้ประเมินเริ่มประเมินได้ทันที ข้อมูลภาคเรียนเก่ายังอยู่ครบและออกรายงานย้อนหลังได้' +
+        '</span></div>' +
+        '<div class="alert alert--warn"><span>⚠️</span><span>' +
+          'การเปลี่ยนภาคเรียนปัจจุบัน<b>ไม่ลบข้อมูลใด ๆ</b> เป็นเพียงการเปลี่ยนค่าเริ่มต้นของหน้าจอเท่านั้น' +
+        '</span></div>' +
+      '</div>' +
+
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>📊 ข้อมูลของแต่ละภาคเรียน</h3>' +
+      '<div class="spacer"></div><span class="badge badge--brand">' + data.terms.length + ' ภาคเรียน</span></div>' +
+      '<div class="table-wrap"><table><thead><tr>' +
+        '<th>ภาคเรียน</th><th class="num">ผลการประเมิน</th><th class="num">ในคลังข้อมูล</th>' +
+        '<th class="num">รายการเวร</th><th class="num">ครูที่ถูกประเมิน</th><th class="num">ผู้ประเมิน</th><th></th>' +
+      '</tr></thead><tbody>' +
+        data.terms.map(function (t) {
+          return '<tr><td><b>' + esc(t.label) + '</b>' +
+              (t.isCurrent ? ' <span class="badge badge--ok">ปัจจุบัน</span>' : '') +
+              (t.outsideSettings ? ' <span class="badge badge--warn">ไม่อยู่ในรายการที่เปิดใช้งาน</span>' : '') + '</td>' +
+            '<td class="num">' + t.results + '</td><td class="num">' + t.archived + '</td>' +
+            '<td class="num">' + t.duty + '</td><td class="num">' + t.teachers + '</td>' +
+            '<td class="num">' + t.evaluators + '</td>' +
+            '<td><div class="btn-row">' +
+              (t.isCurrent ? '' : '<button class="btn btn--soft btn--sm" onclick="Terms.setCurrent(\'' +
+                jsAttr(t.year) + '\',\'' + jsAttr(t.semester) + '\')">ตั้งเป็นปัจจุบัน</button>') +
+              (t.results || t.archived
+                ? '<button class="btn btn--ghost btn--sm" onclick="Terms.goCleanup(\'' + jsAttr(t.year) +
+                  '\',\'' + jsAttr(t.semester) + '\')">🧹 เคลียร์</button>' : '') +
+            '</div></td></tr>';
+        }).join('') +
+      '</tbody></table></div>' +
+    '</div>';
+
+  $('btnSaveCurrentTerm').onclick = async function () {
+    await Terms.save(this, { currentYear: $('tCurYear').value, currentSemester: $('tCurSem').value });
+  };
+  $('btnUseSuggested').onclick = async function () {
+    await Terms.save(this, { currentYear: data.suggestedYear });
+  };
+  $('btnAddYear').onclick = async function () {
+    const year = $('newYear').value.trim();
+    if (!/^\d{4}$/.test(year)) { toast('ปีการศึกษาต้องเป็นตัวเลข 4 หลัก เช่น 2569', 'warn'); return; }
+    const years = data.configuredYears.slice();
+    if (years.indexOf(year) !== -1) { toast('มีปีการศึกษานี้อยู่แล้ว', 'warn'); return; }
+    years.push(year);
+    await Terms.save(this, { years: years });
+  };
+  $('btnSaveSemesters').onclick = async function () {
+    const list = Array.prototype.slice.call(document.querySelectorAll('.semOpt:checked'))
+      .map(function (c) { return c.value; });
+    if (!list.length) { toast('ต้องเปิดใช้งานอย่างน้อย 1 ภาคเรียน', 'warn'); return; }
+    await Terms.save(this, { semesters: list });
+  };
+};
+
+const Terms = {};
+
+Terms.save = async function (button, patch) {
+  try {
+    await apiWithButton(button, 'apiSaveTermSettings', App.session.token, patch);
+    toast('บันทึกเรียบร้อย', 'ok');
+    App.go('terms');
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+Terms.setCurrent = async function (year, semester) {
+  try {
+    const res = await rpc('apiSaveTermSettings', App.session.token,
+      { currentYear: year, currentSemester: semester });
+    if (!res.success) throw new Error(res.message);
+    toast(res.message, 'ok');
+    App.go('terms');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+Terms.removeYear = async function (year) {
+  const yes = await confirmDialog({
+    title: '🗑️ ลบปีการศึกษาออกจากรายการ',
+    message: 'ต้องการลบปีการศึกษา ' + year + ' ออกจากรายการที่เปิดใช้งานใช่หรือไม่?',
+    warning: 'ข้อมูลการประเมินของปีนี้จะยังอยู่ครบ เป็นเพียงการซ่อนจากตัวเลือกเท่านั้น',
+    confirmText: 'ลบออกจากรายการ'
+  });
+  if (!yes) return;
+  try {
+    const res = await rpc('apiRemoveAcademicYear', App.session.token, year);
+    if (!res.success) throw new Error(res.message);
+    toast(res.message, 'ok', 7000);
+    App.go('terms');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+Terms.goCleanup = function (year, semester) {
+  Cleanup.preset = { scope: 'term', year: year, semester: semester };
+  App.go('cleanup');
+};
+
+/* ==================== เคลียร์ข้อมูลการประเมิน ==================== */
+
+const Cleanup = { preset: null, preview: null };
+
+App.pages.cleanup = async function (container) {
+  const data = await api('apiTermOverview', App.session.token);
+  const preset = Cleanup.preset || {};
+  Cleanup.preset = null;
+  const semesters = data.semesterOptions.filter(function (s) { return s.enabled; });
+
+  container.innerHTML =
+    '<div class="alert alert--warn"><span>⚠️</span><span>' +
+      '<b>หน้านี้ใช้ลบข้อมูลการประเมิน</b> — แนะนำให้เลือก "ย้ายเข้าคลังข้อมูล" ซึ่งกู้คืนได้เสมอ ' +
+      'ส่วน "ลบถาวร" จะกู้คืนไม่ได้ ระบบจึงบังคับให้พิมพ์ข้อความยืนยันก่อนทุกครั้ง' +
+    '</span></div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>1️⃣ เลือกขอบเขตข้อมูลที่ต้องการเคลียร์</h3></div>' +
+      '<div class="grid grid-3">' +
+        '<div class="field"><label>ขอบเขต</label><select id="clScope">' +
+          '<option value="term">รายภาคเรียน</option>' +
+          '<option value="year">ทั้งปีการศึกษา</option>' +
+          '<option value="all">ข้อมูลการประเมินทั้งหมด</option>' +
+        '</select></div>' +
+        '<div class="field"><label>ปีการศึกษา</label><select id="clYear">' +
+          optionsHtml(data.years, preset.year || data.currentYear) + '</select></div>' +
+        '<div class="field"><label>ภาคเรียน</label><select id="clSemester">' +
+          optionsHtml(semesters, preset.semester || data.currentSemester,
+            function (s) { return { value: s.value, label: s.label }; }) + '</select></div>' +
+      '</div>' +
+      '<div class="grid grid-2">' +
+        '<div class="field"><label>ข้อมูลที่ต้องการจัดการ</label><select id="clTarget">' +
+          '<option value="results">ตารางผลการประเมิน (ข้อมูลที่ใช้งานอยู่)</option>' +
+          '<option value="archive">คลังข้อมูลย้อนหลัง</option>' +
+          '<option value="both">ทั้งสองส่วน</option>' +
+        '</select></div>' +
+        '<div class="field"><label>วิธีดำเนินการ</label><select id="clMode">' +
+          '<option value="archive">ย้ายเข้าคลังข้อมูล (แนะนำ — กู้คืนได้)</option>' +
+          '<option value="delete">ลบถาวร (กู้คืนไม่ได้)</option>' +
+        '</select></div>' +
+      '</div>' +
+      '<div class="field"><label>หมายเหตุ (บันทึกลงประวัติการใช้งาน)</label>' +
+        '<input type="text" id="clNote" placeholder="เช่น ปิดภาคเรียนที่ 1/2568 เรียบร้อย"></div>' +
+      '<label class="checkbox"><input type="checkbox" id="clBackup" checked>' +
+        '<span>สำรองเป็นไฟล์ Excel เก็บไว้ใน Google Drive ก่อนดำเนินการ' +
+        '<div class="small muted">แนะนำอย่างยิ่งเมื่อเลือก "ลบถาวร"</div></span></label>' +
+      '<button class="btn btn--soft" id="btnClPreview">🔍 ตรวจสอบข้อมูลที่จะได้รับผลกระทบ</button>' +
+    '</div>' +
+
+    '<div id="clPreviewArea"></div>' +
+    '<div id="clResultArea"></div>';
+
+  const syncFields = function () {
+    const scope = $('clScope').value;
+    $('clYear').disabled = scope === 'all';
+    $('clSemester').disabled = scope !== 'term';
+    const mode = $('clMode').value;
+    $('clTarget').disabled = mode === 'archive';
+    if (mode === 'archive') $('clTarget').value = 'results';
+    $('clBackup').checked = mode === 'delete' ? true : $('clBackup').checked;
+    $('clPreviewArea').innerHTML = '';
+    $('clResultArea').innerHTML = '';
+  };
+  ['clScope', 'clMode', 'clYear', 'clSemester', 'clTarget'].forEach(function (id) {
+    $(id).onchange = syncFields;
+  });
+  if (preset.scope) $('clScope').value = preset.scope;
+  syncFields();
+
+  $('btnClPreview').onclick = function () { Cleanup.doPreview(this); };
+};
+
+Cleanup.options = function () {
+  return {
+    scope: $('clScope').value,
+    year: $('clYear').value,
+    semester: $('clSemester').value,
+    target: $('clTarget').value,
+    mode: $('clMode').value,
+    backup: $('clBackup').checked,
+    note: $('clNote').value.trim()
+  };
+};
+
+Cleanup.doPreview = async function (button) {
+  try {
+    const o = Cleanup.options();
+    const p = await apiWithButton(button, 'apiClearPreview', App.session.token, o);
+    Cleanup.preview = p;
+    const permanent = o.mode === 'delete';
+
+    $('clPreviewArea').innerHTML =
+      '<div class="card">' +
+        '<div class="card__head"><h3>2️⃣ ตรวจสอบก่อนดำเนินการ</h3>' +
+          '<div class="spacer"></div><span class="badge ' + (permanent ? 'badge--danger' : 'badge--warn') + '">' +
+          (permanent ? 'ลบถาวร' : 'ย้ายเข้าคลัง') + '</span></div>' +
+        '<div class="grid grid-4" style="margin-bottom:14px">' +
+          '<div class="stat"><div class="label">ขอบเขต</div><div style="font-weight:700;font-size:15px">' +
+            esc(p.label) + '</div></div>' +
+          '<div class="stat c3"><div class="label">ในตารางผลการประเมิน</div><div class="value">' + p.results + '</div>' +
+            '<div class="hint">รายการ</div></div>' +
+          '<div class="stat c4"><div class="label">ในคลังข้อมูล</div><div class="value">' + p.archived + '</div>' +
+            '<div class="hint">รายการ</div></div>' +
+          '<div class="stat c5"><div class="label">จะได้รับผลกระทบ</div><div class="value">' + p.affected + '</div>' +
+            '<div class="hint">รายการ · ครู ' + p.teachers + ' คน</div></div>' +
+        '</div>' +
+        (p.affected === 0
+          ? '<div class="alert alert--info"><span>ℹ️</span><span>ไม่พบข้อมูลตามเงื่อนไขที่เลือก</span></div>'
+          : (permanent
+              ? '<div class="alert alert--danger"><span>🛑</span><span><b>ข้อมูลจะถูกลบถาวรและกู้คืนไม่ได้</b>' +
+                ($('clBackup').checked ? '<br>ระบบจะสำรองเป็นไฟล์ Excel ให้ก่อนลบ' :
+                  '<br>⚠️ ท่านไม่ได้เลือกสำรองข้อมูล แนะนำให้ติ๊ก "สำรองเป็นไฟล์ Excel" ก่อน') + '</span></div>'
+              : '<div class="alert alert--info"><span>ℹ️</span><span>ข้อมูลจะถูกย้ายไปยังคลังข้อมูล ' +
+                'ยังค้นย้อนหลัง ออกรายงาน และกู้คืนกลับได้ทุกเมื่อ</span></div>') +
+            '<div class="field"><label>พิมพ์ <b class="mono">' + esc(p.phrase) + '</b> เพื่อยืนยัน</label>' +
+              '<input type="text" id="clConfirm" placeholder="' + esc(p.phrase) + '" autocomplete="off"></div>' +
+            '<button class="btn ' + (permanent ? 'btn--danger' : 'btn--warn') + ' btn--lg" id="btnClRun" disabled>' +
+              (permanent ? '🗑️ ลบถาวร' : '📦 ย้ายเข้าคลังข้อมูล') + '</button>') +
+      '</div>';
+
+    if (p.affected > 0) {
+      $('clConfirm').oninput = function () {
+        $('btnClRun').disabled = this.value.trim() !== p.phrase;
+      };
+      $('btnClRun').onclick = function () { Cleanup.run(this, p); };
+      $('clPreviewArea').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+Cleanup.run = async function (button, preview) {
+  const o = Cleanup.options();
+  o.confirm = $('clConfirm').value.trim();
+  const permanent = o.mode === 'delete';
+
+  const yes = await confirmDialog({
+    title: permanent ? '🛑 ยืนยันการลบถาวร' : '📦 ยืนยันการย้ายเข้าคลัง',
+    message: (permanent ? 'ลบข้อมูลของ' : 'ย้ายข้อมูลของ') + preview.label + ' จำนวน ' +
+      preview.affected + ' รายการ',
+    warning: permanent ? 'ข้อมูลจะหายถาวร กู้คืนไม่ได้' : 'ข้อมูลจะยังกู้คืนได้จากหน้าคลังข้อมูล',
+    confirmText: permanent ? 'ลบถาวร' : 'ย้ายเข้าคลัง',
+    danger: permanent
+  });
+  if (!yes) return;
+
+  try {
+    const res = await apiWithButton(button, 'apiClearResults', App.session.token, o);
+    $('clPreviewArea').innerHTML = '';
+    $('clResultArea').innerHTML =
+      '<div class="card">' +
+        '<div class="card__head"><h3>✅ ดำเนินการเรียบร้อย</h3></div>' +
+        '<div class="alert alert--ok"><span>✅</span><span>' +
+          (res.archived ? 'ย้ายเข้าคลัง ' + res.archived + ' รายการ<br>' : '') +
+          (res.deletedResults ? 'ลบจากตารางผลการประเมิน ' + res.deletedResults + ' รายการ<br>' : '') +
+          (res.deletedArchive ? 'ลบจากคลังข้อมูล ' + res.deletedArchive + ' รายการ' : '') +
+        '</span></div>' +
+        (res.backup ? '<div class="file-card"><div class="fi xlsx">📊</div>' +
+          '<div style="flex:1;min-width:180px"><div class="fname">' + esc(res.backup.name) + '</div>' +
+          '<div class="fmeta">ไฟล์สำรอง ' + res.backup.rows + ' รายการ · เก็บไว้ใน Google Drive</div></div>' +
+          '<a class="btn btn--ghost btn--sm" href="' + esc(res.backup.url) + '" target="_blank" rel="noopener">🔗 เปิดไฟล์สำรอง</a>' +
+          '</div>' : '') +
+        '<div class="btn-row">' +
+          '<button class="btn btn--ghost" onclick="App.go(\'archive\')">🗄️ ไปที่คลังข้อมูล</button>' +
+          '<button class="btn btn--ghost" onclick="App.go(\'terms\')">📆 ไปที่ปีการศึกษา/ภาคเรียน</button>' +
+          '<button class="btn btn--ghost" onclick="App.go(\'cleanup\')">🧹 เคลียร์ข้อมูลอื่นต่อ</button>' +
+        '</div>' +
+      '</div>';
+    toast(res.message || 'ดำเนินการเรียบร้อย', 'ok', 7000);
+    $('clResultArea').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    toast(err.message, 'danger', 9000);
+  }
+};
+</script>

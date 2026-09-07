@@ -73,10 +73,45 @@ function clientId() {
   }
 }
 
+/* ---------- แคชผลลัพธ์ฝั่งหน้าจอ ทำให้สลับเมนูไป-กลับได้ทันที ---------- */
+
+const READ_CACHE_TTL = 45000;                       // มิลลิวินาที
+const READ_PREFIXES = ['apiList', 'apiGet', 'apiAdminOverview', 'apiExportCandidates',
+  'apiEvaluatorContext', 'apiEvaluatorDutyView', 'apiMyEvaluations', 'apiTeacherHistory',
+  'apiHealthCheck', 'apiTermOverview'];
+const readCache = new Map();
+
+function isReadCall(fnName) {
+  return READ_PREFIXES.some(function (p) { return fnName.indexOf(p) === 0; });
+}
+function cacheKey(fnName, args) {
+  try { return fnName + '|' + JSON.stringify(args); } catch (e) { return ''; }
+}
+/** ล้างแคชทั้งหมด เรียกทุกครั้งที่มีการบันทึก/ลบข้อมูล เพื่อไม่ให้เห็นข้อมูลเก่า */
+function clearReadCache() { readCache.clear(); }
+
+/* ---------- โหลดไลบรารีกราฟเฉพาะตอนที่ต้องใช้ (ลดเวลาเปิดระบบครั้งแรก) ---------- */
+
+let chartLoader = null;
+function ensureChartJs() {
+  if (typeof Chart !== 'undefined') return Promise.resolve(true);
+  if (chartLoader) return chartLoader;
+  chartLoader = new Promise(function (resolve) {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';
+    script.async = true;
+    script.onload = function () { resolve(true); };
+    script.onerror = function () { resolve(false); };
+    document.head.appendChild(script);
+  });
+  return chartLoader;
+}
+
 /* ---------- การเรียกฟังก์ชันฝั่งเซิร์ฟเวอร์ ---------- */
 
 function rpc(fnName) {
   const args = Array.prototype.slice.call(arguments, 1);
+  if (!isReadCall(fnName)) clearReadCache();
   return new Promise(function (resolve, reject) {
     google.script.run
       .withSuccessHandler(resolve)
@@ -91,7 +126,25 @@ function rpc(fnName) {
  */
 async function api(fnName) {
   const args = Array.prototype.slice.call(arguments, 1);
+
+  // อ่านจากแคชถ้ายังไม่หมดอายุ (คืนสำเนาใหม่เสมอ เพื่อไม่ให้ข้อมูลในแคชถูกแก้)
+  const key = isReadCall(fnName) ? cacheKey(fnName, args) : '';
+  if (key) {
+    const hit = readCache.get(key);
+    if (hit && (Date.now() - hit.at) < READ_CACHE_TTL) return JSON.parse(hit.json);
+  }
+
   const res = await rpc.apply(null, [fnName].concat(args));
+
+  if (res && res.success === true) {
+    if (key) {
+      try { readCache.set(key, { at: Date.now(), json: JSON.stringify(res.data === undefined ? res : res.data) }); }
+      catch (e) { /* ข้อมูลใหญ่เกินไปก็ไม่ต้องแคช */ }
+    } else {
+      clearReadCache();   // เป็นการเขียนข้อมูล → ข้อมูลที่แคชไว้ถือว่าเก่าแล้ว
+    }
+  }
+
   if (!res || res.success !== true) {
     const message = (res && res.message) ? res.message : 'ดำเนินการไม่สำเร็จ';
     if (/เซสชันหมดอายุ|ไม่มีสิทธิ์เข้าถึง/.test(message)) {
@@ -372,26 +425,28 @@ App.showStrength = function (password, elementId) {
 App.NAV = {
   admin: [
     { group: 'ภาพรวม' },
-    { id: 'dashboard', icon: '📊', label: 'แดชบอร์ด' },
-    { id: 'results', icon: '📋', label: 'ผลการประเมิน' },
-    { id: 'export', icon: '📤', label: 'ประมวลผลและส่งออก' },
+    { id: 'dashboard', icon: '📊', label: 'แดชบอร์ด', primary: true },
+    { id: 'results', icon: '📋', label: 'ผลการประเมิน', primary: true },
+    { id: 'export', icon: '📤', label: 'ประมวลผล/ส่งออก', primary: true },
     { id: 'archive', icon: '🗄️', label: 'คลังข้อมูลย้อนหลัง' },
     { group: 'ข้อมูลหลัก' },
     { id: 'teachers', icon: '🧑‍🏫', label: 'ครูผู้รับการประเมิน' },
     { id: 'evaluators', icon: '👥', label: 'ผู้ประเมิน' },
-    { id: 'duty', icon: '📅', label: 'เวรประจำวันรายภาคเรียน' },
+    { id: 'duty', icon: '📅', label: 'เวรประจำวัน' },
     { id: 'criteria', icon: '📝', label: 'เกณฑ์การประเมิน' },
     { group: 'ระบบ' },
+    { id: 'terms', icon: '📆', label: 'ปีการศึกษาและภาคเรียน' },
+    { id: 'cleanup', icon: '🧹', label: 'เคลียร์ข้อมูล' },
     { id: 'settings', icon: '⚙️', label: 'ตั้งค่าและความปลอดภัย' },
     { id: 'logs', icon: '🕘', label: 'ประวัติการใช้งาน' }
   ],
   evaluator: [
     { group: 'งานของฉัน' },
-    { id: 'evaluate', icon: '📝', label: 'แบบประเมิน' },
-    { id: 'myHistory', icon: '📋', label: 'ผลที่ฉันประเมินแล้ว' },
-    { id: 'myDuty', icon: '📅', label: 'ตารางเวรประจำวัน' },
+    { id: 'evaluate', icon: '📝', label: 'แบบประเมิน', primary: true },
+    { id: 'myHistory', icon: '📋', label: 'ผลที่ฉันประเมินแล้ว', primary: true },
+    { id: 'myDuty', icon: '📅', label: 'ตารางเวรประจำวัน', primary: true },
     { group: 'บัญชีของฉัน' },
-    { id: 'myPassword', icon: '🔑', label: 'เปลี่ยนรหัสผ่าน' }
+    { id: 'myPassword', icon: '🔑', label: 'เปลี่ยนรหัสผ่าน', primary: true }
   ]
 };
 
@@ -407,12 +462,25 @@ App.startApp = function () {
   const nav = App.NAV[s.kind] || [];
   $('sideNav').innerHTML = nav.map(function (item) {
     if (item.group) return '<div class="group">' + esc(item.group) + '</div>';
-    return '<button class="navlink" data-page="' + item.id + '" onclick="App.go(\'' + item.id + '\')">' +
-      '<span class="ico">' + item.icon + '</span><span>' + esc(item.label) + '</span></button>';
+    return '<button class="navlink" data-page="' + esc(item.id) + '" data-title="' + esc(item.label) + '"' +
+      ' onclick="App.go(\'' + esc(item.id) + '\')">' +
+      '<span class="ico">' + item.icon + '</span><span class="txt">' + esc(item.label) + '</span></button>';
   }).join('');
 
-  const first = nav.filter(function (i) { return i.id; })[0];
-  App.go(first ? first.id : 'dashboard');
+  // แถบเมนูล่างสำหรับมือถือ: เมนูหลัก + ปุ่มเปิดเมนูทั้งหมด
+  const pages = nav.filter(function (i) { return i.id; });
+  const primary = pages.filter(function (i) { return i.primary; }).slice(0, 4);
+  const bottom = primary.map(function (item) {
+    return '<button data-page="' + esc(item.id) + '" onclick="App.go(\'' + esc(item.id) + '\')">' +
+      '<span class="ico">' + item.icon + '</span><span class="txt">' + esc(item.label.split(' ')[0]) + '</span></button>';
+  });
+  if (pages.length > primary.length) {
+    bottom.push('<button onclick="App.toggleSidebar()"><span class="ico">☰</span><span class="txt">เมนู</span></button>');
+  }
+  $('bottomNav').innerHTML = bottom.join('');
+
+  App.setupTableEnhancer();
+  App.go(pages[0] ? pages[0].id : 'dashboard');
 
   if (s.kind === 'evaluator' && s.mustChangePassword) {
     setTimeout(function () {
@@ -422,36 +490,159 @@ App.startApp = function () {
   }
 };
 
-App.go = function (pageId) {
+App.go = function (pageId, options) {
+  const opts = options || {};
   const nav = (App.NAV[App.session.kind] || []).filter(function (i) { return i.id === pageId; })[0];
   if (!nav) return;
 
   App.currentPage = pageId;
-  document.querySelectorAll('.navlink').forEach(function (b) {
+  document.querySelectorAll('.navlink, .bottomnav button').forEach(function (b) {
     b.classList.toggle('active', b.dataset.page === pageId);
   });
   $('pageTitle').innerHTML = nav.icon + ' ' + esc(nav.label);
-  $('sidebar').classList.remove('open');
+  App.closeSidebar();
 
   const container = $('pageContent');
-  container.innerHTML = '<div class="card"><div class="skeleton" style="width:40%"></div>' +
-    '<div class="skeleton"></div><div class="skeleton" style="width:75%"></div></div>';
+  container.scrollTop = 0;
+  container.innerHTML =
+    '<div class="page-loading"><span class="spinner spinner--dark"></span><span>กำลังโหลดข้อมูล...</span></div>' +
+    '<div class="card"><div class="skeleton" style="width:38%"></div>' +
+    '<div class="skeleton"></div><div class="skeleton" style="width:72%"></div></div>';
 
   const renderer = App.pages[pageId];
-  if (!renderer) { container.innerHTML = '<div class="empty"><div class="ico">🚧</div>ยังไม่พร้อมใช้งาน</div>'; return; }
+  if (!renderer) { container.innerHTML = emptyState('🚧', 'ยังไม่พร้อมใช้งาน'); return; }
 
-  Promise.resolve(renderer(container)).catch(function (err) {
+  const token = ++App.renderToken;
+  return Promise.resolve(renderer(container)).then(function () {
+    if (token !== App.renderToken) return;   // ผู้ใช้เปลี่ยนหน้าไปแล้ว
+    App.enhanceTables();
+  }).catch(function (err) {
+    if (token !== App.renderToken) return;
     container.innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' +
       esc(err.message) + '</span></div>' +
-      '<button class="btn btn--ghost" onclick="App.go(\'' + pageId + '\')">🔄 ลองใหม่</button>';
+      '<button class="btn btn--ghost" onclick="App.go(\'' + esc(pageId) + '\')">🔄 ลองใหม่</button>';
+  });
+};
+App.renderToken = 0;
+
+/** โหลดข้อมูลหน้าปัจจุบันใหม่ (ล้างแคชก่อน) */
+App.refresh = function () {
+  clearReadCache();
+  const btn = $('btnRefresh');
+  if (btn) { btn.textContent = '⏳'; setTimeout(function () { btn.textContent = '🔄'; }, 900); }
+  if (App.currentPage) App.go(App.currentPage);
+};
+
+/* ---------- เมนูข้างแบบลิ้นชักบนจอเล็ก ---------- */
+
+App.toggleSidebar = function () {
+  const open = !$('sidebar').classList.contains('open');
+  $('sidebar').classList.toggle('open', open);
+  $('drawerBackdrop').classList.toggle('show', open);
+};
+App.closeSidebar = function () {
+  $('sidebar').classList.remove('open');
+  $('drawerBackdrop').classList.remove('show');
+};
+
+/* ---------- โหมดเต็มหน้าจอ ---------- */
+
+App.toggleFullscreen = function () {
+  const el = document.documentElement;
+  const isFull = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (isFull) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      return;
+    }
+    const request = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (request) {
+      const result = request.call(el);
+      if (result && result.catch) result.catch(function () { App.openInNewTab(); });
+      return;
+    }
+  } catch (e) { /* เบราว์เซอร์ไม่รองรับ */ }
+  App.openInNewTab();
+};
+
+/** เปิดระบบในแท็บใหม่ (ใช้เมื่อเปิดจากหน้าต่างซ้อนใน Google Sheets ซึ่งขยายเต็มจอไม่ได้) */
+App.openInNewTab = function () {
+  const url = App.boot && App.boot.webAppUrl;
+  if (!url) {
+    toast('ยังไม่ได้เผยแพร่เว็บแอป — ใช้เมนู "🔗 ลิงก์เว็บแอปสำหรับผู้ประเมิน" ใน Google Sheets เพื่อเผยแพร่ก่อน', 'warn', 8000);
+    return;
+  }
+  window.open(url, '_blank');
+};
+
+/* ---------- ตารางบนมือถือ: แปลงเป็นการ์ดอัตโนมัติ ---------- */
+
+/**
+ * ใส่ชื่อคอลัมน์ลงในแต่ละช่องของตาราง เพื่อให้ CSS แสดงเป็นการ์ดได้บนจอแคบ
+ * ทำอัตโนมัติทุกตารางในระบบ จึงไม่ต้องแก้โค้ดของแต่ละหน้า
+ */
+App.enhanceTables = function (root) {
+  const scope = root || document;
+  scope.querySelectorAll('table').forEach(function (table) {
+    if (table.dataset.enhanced === '1') return;
+    const headers = Array.prototype.slice.call(table.querySelectorAll('thead th'))
+      .map(function (th) { return th.textContent.trim(); });
+    if (!headers.length) return;
+
+    table.classList.add('as-cards');
+    table.querySelectorAll('tbody tr').forEach(function (tr) {
+      const cells = tr.children;
+      for (let i = 0; i < cells.length; i++) {
+        const td = cells[i];
+        if (td.hasAttribute('colspan')) { td.classList.add('no-label'); continue; }
+        const label = headers[i] || '';
+        // ช่องที่มีแต่ปุ่ม ให้แสดงเป็นแถวปุ่มเต็มความกว้าง
+        if (td.querySelector('.btn-row') || (!label && td.querySelector('.btn'))) {
+          td.classList.add('cell-actions');
+          continue;
+        }
+        if (!label || /^#$/.test(label) || /^ลำดับ$/.test(label)) {
+          td.classList.add('cell-index');   // คอลัมน์ลำดับ ซ่อนในโหมดการ์ด
+          continue;
+        }
+        td.setAttribute('data-label', label);
+      }
+      // ช่องแรกที่มีข้อความหนา ถือเป็นหัวการ์ด
+      const strongCell = tr.querySelector('td b');
+      if (strongCell && strongCell.parentElement.parentElement === tr) {
+        strongCell.parentElement.classList.add('cell-primary');
+        strongCell.parentElement.removeAttribute('data-label');
+      }
+    });
+    table.dataset.enhanced = '1';
   });
 };
 
-App.toggleSidebar = function () { $('sidebar').classList.toggle('open'); };
+/** เฝ้าดูการเปลี่ยนแปลงของหน้าจอ เพื่อจัดตารางที่สร้างใหม่ให้อัตโนมัติ */
+App.setupTableEnhancer = function () {
+  if (App.tableObserver) return;
+  let pending = null;
+  App.tableObserver = new MutationObserver(function () {
+    clearTimeout(pending);
+    pending = setTimeout(function () { App.enhanceTables(); }, 60);
+  });
+  [$('pageContent'), $('modalHost')].forEach(function (node) {
+    if (node) App.tableObserver.observe(node, { childList: true, subtree: true });
+  });
+};
 
 App.setTermBadge = function (year, semester) {
-  $('termBadge').textContent = year ? ('📅 ภาคเรียนที่ ' + semester + '/' + year) : '';
+  const badge = $('termBadge');
+  if (!badge) return;
+  badge.textContent = year ? ('📅 ' + semesterLabel(semester) + '/' + year) : '';
 };
+
+/** ชื่อภาคเรียนที่อ่านง่าย (รองรับภาคฤดูร้อน) */
+function semesterLabel(value) {
+  const v = String(value || '');
+  if (v === '3') return 'ภาคฤดูร้อน';
+  return 'ภาคเรียนที่ ' + v;
+}
 
 /* ---------- ตัวช่วยสร้าง HTML ที่ใช้ซ้ำ ---------- */
 
@@ -474,7 +665,7 @@ function termFilterHtml(data, onChange) {
       '<select id="fYear" onchange="' + onChange + '">' + optionsHtml(data.years, data.year) + '</select></div>' +
     '<div class="field"><label>ภาคเรียน</label>' +
       '<select id="fSemester" onchange="' + onChange + '">' +
-      optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) +
+      optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: semesterLabel(s) }; }) +
       '</select></div>';
 }
 

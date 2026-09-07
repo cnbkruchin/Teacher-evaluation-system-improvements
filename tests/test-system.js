@@ -323,7 +323,129 @@ check('ใช้ OTP ซ้ำไม่ได้', apiVerifyAdminRecovery(otp, '
 const emergencyPw = emergencyResetAdminPassword();
 check('รีเซ็ตฉุกเฉินจากตัวแก้ไขสคริปต์ได้', apiAdminLogin(emergencyPw, 'dev4').success === true);
 
-/* ---------- 14. ตรวจสุขภาพระบบ ---------- */
+/* ---------- 14. ตั้งค่าปีการศึกษาและภาคเรียนอย่างอิสระ ---------- */
+section('ตั้งค่าปีการศึกษาและภาคเรียนอย่างอิสระ');
+const T2 = apiAdminLogin(emergencyPw, 'dev5').data.token;
+
+const overview = apiTermOverview(T2);
+check('เปิดหน้าปีการศึกษา/ภาคเรียนได้', overview.success === true, overview.message);
+check('แสดงภาคเรียนที่เปิดใช้งาน 2 ภาคเรียนโดยค่าเริ่มต้น',
+  overview.data.semesterOptions.filter(o => o.enabled).length === 2,
+  overview.data.semesterOptions);
+check('มีภาคฤดูร้อนให้เลือกเปิดใช้งาน',
+  overview.data.semesterOptions.some(o => o.value === '3' && o.label === 'ภาคฤดูร้อน'));
+check('สรุปจำนวนข้อมูลรายภาคเรียนได้', overview.data.terms.length > 0, overview.data.terms.length);
+
+// เปลี่ยนเฉพาะภาคเรียน โดยไม่แตะปีการศึกษา
+const beforeYear = currentTerm_().year;
+const semOnly = apiSaveTermSettings(T2, { currentSemester: '2' });
+check('เปลี่ยนภาคเรียนปัจจุบันได้โดยไม่กระทบปีการศึกษา',
+  semOnly.success === true && currentTerm_().semester === '2' && currentTerm_().year === beforeYear,
+  [semOnly.message, currentTerm_()]);
+
+// เปลี่ยนเฉพาะปีการศึกษา โดยไม่แตะภาคเรียน
+const yearOnly = apiSaveTermSettings(T2, { currentYear: '2570' });
+check('เปลี่ยนปีการศึกษาปัจจุบันได้โดยไม่กระทบภาคเรียน',
+  yearOnly.success === true && currentTerm_().year === '2570' && currentTerm_().semester === '2',
+  [yearOnly.message, currentTerm_()]);
+check('ปีการศึกษาใหม่ถูกเพิ่มเข้ารายการอัตโนมัติ',
+  academicYears_().indexOf('2570') !== -1, academicYears_());
+
+check('ปีการศึกษาผิดรูปแบบ → ปฏิเสธ', apiSaveTermSettings(T2, { currentYear: '68' }).success === false);
+check('เลือกภาคเรียนที่ยังไม่เปิดใช้งาน → ปฏิเสธ',
+  apiSaveTermSettings(T2, { currentSemester: '3' }).success === false);
+
+// เปิดใช้งานภาคฤดูร้อน แล้วจึงเลือกได้
+const openSummer = apiSaveTermSettings(T2, { semesters: ['1', '2', '3'] });
+check('เปิดใช้งานภาคฤดูร้อนได้', openSummer.success === true, openSummer.message);
+check('ภาคฤดูร้อนใช้งานได้แล้ว', semesterList_().indexOf('3') !== -1, semesterList_());
+check('ตั้งภาคฤดูร้อนเป็นภาคเรียนปัจจุบันได้',
+  apiSaveTermSettings(T2, { currentSemester: '3' }).success === true);
+check('ชื่อภาคเรียนแสดงถูกต้อง', termLabel_('2570', '3') === 'ภาคฤดูร้อน/2570', termLabel_('2570', '3'));
+check('ปิดภาคเรียนทั้งหมดไม่ได้', apiSaveTermSettings(T2, { semesters: [] }).success === false);
+
+// จัดการรายการปีการศึกษา
+check('ลบปีการศึกษาปัจจุบันไม่ได้', apiRemoveAcademicYear(T2, '2570').success === false);
+apiSaveTermSettings(T2, { currentYear: YEAR, currentSemester: '1' });
+const removeYear = apiRemoveAcademicYear(T2, '2570');
+check('ลบปีการศึกษาอื่นออกจากรายการได้', removeYear.success === true, removeYear.message);
+check('ปีที่ลบหายจากรายการที่ตั้งค่าไว้',
+  str_(getSetting_(SETTING_KEYS.ACADEMIC_YEARS, '')).split(',').indexOf('2570') === -1,
+  getSetting_(SETTING_KEYS.ACADEMIC_YEARS, ''));
+
+/* ---------- 15. เคลียร์ข้อมูลการประเมินรายภาคเรียน/รายปี ---------- */
+section('เคลียร์ข้อมูลการประเมินรายภาคเรียนและรายปีการศึกษา');
+
+// เตรียมข้อมูลใหม่ 2 ภาคเรียน เพื่อทดสอบการเคลียร์แบบเจาะจง
+const seedEvaluations = function (year, semester, count) {
+  const rows = [];
+  for (let i = 0; i < count; i++) {
+    rows.push({
+      'รหัสการประเมิน': 'EVR-T' + year + semester + i,
+      'วันที่บันทึก': new Date(), 'ปีการศึกษา': year, 'ภาคเรียน': semester,
+      'ผู้ประเมิน': 'ผู้ประเมินทดสอบ', 'บทบาทผู้ประเมิน': ROLES.VICE_DIRECTOR,
+      'รหัสครู': 'TCH-000' + (i + 1), 'ครูผู้รับการประเมิน': 'ครูทดสอบ ' + (i + 1),
+      'คะแนนเฉลี่ย': 4, 'ระดับผลการประเมิน': 'ดีมาก', 'สถานะ': 'ปกติ'
+    });
+  }
+  appendRecords_(SHEETS.RESULTS, rows);
+  return rows.length;
+};
+const RESULTS_BEFORE = readTable_(SHEETS.RESULTS).rows.length;
+seedEvaluations('2598', '1', 5);
+seedEvaluations('2598', '2', 3);
+seedEvaluations('2599', '1', 4);
+
+const preview1 = apiClearPreview(T2, { scope: 'term', year: '2598', semester: '1', target: 'results' });
+check('ดูจำนวนข้อมูลก่อนเคลียร์รายภาคเรียนได้', preview1.success === true, preview1.message);
+check('นับจำนวนถูกต้อง (5 รายการ)', preview1.data.results === 5, preview1.data.results);
+check('ข้อความยืนยันคือ "2598/1"', preview1.data.phrase === '2598/1', preview1.data.phrase);
+
+check('พิมพ์ข้อความยืนยันผิด → ปฏิเสธ',
+  apiClearResults(T2, { scope: 'term', year: '2598', semester: '1', mode: 'archive', confirm: 'ผิด' }).success === false);
+
+const archiveBefore2 = readTable_(SHEETS.ARCHIVE).rows.length;
+const cleared = apiClearResults(T2, {
+  scope: 'term', year: '2598', semester: '1', target: 'results',
+  mode: 'archive', backup: false, confirm: '2598/1', note: 'ทดสอบเคลียร์ภาคเรียน'
+});
+check('เคลียร์รายภาคเรียนแบบย้ายเข้าคลังสำเร็จ', cleared.success === true, cleared.message);
+check('ย้ายเข้าคลังครบ 5 รายการ', cleared.data.archived === 5, cleared.data.archived);
+check('คลังข้อมูลเพิ่มขึ้น 5 รายการ',
+  readTable_(SHEETS.ARCHIVE).rows.length === archiveBefore2 + 5);
+check('ภาคเรียน 2598/1 ไม่เหลือในตารางหลัก',
+  readTable_(SHEETS.RESULTS).rows.filter(r => str_(r['ปีการศึกษา']) === '2598' && str_(r['ภาคเรียน']) === '1').length === 0);
+check('ภาคเรียน 2598/2 ยังอยู่ครบ (ไม่ถูกกระทบ)',
+  readTable_(SHEETS.RESULTS).rows.filter(r => str_(r['ปีการศึกษา']) === '2598' && str_(r['ภาคเรียน']) === '2').length === 3);
+check('กู้คืนจากคลังได้หลังเคลียร์',
+  apiListArchive(T2, { year: '2598', semester: '1' }).data.rows.length >= 5);
+
+// เคลียร์ทั้งปีการศึกษาแบบลบถาวร พร้อมสำรองไฟล์
+const previewYear = apiClearPreview(T2, { scope: 'year', year: '2599', target: 'both' });
+check('ดูจำนวนข้อมูลรายปีการศึกษาได้', previewYear.data.results === 4, previewYear.data.results);
+check('ข้อความยืนยันรายปีคือ "2599"', previewYear.data.phrase === '2599', previewYear.data.phrase);
+
+const deleted = apiClearResults(T2, {
+  scope: 'year', year: '2599', target: 'both', mode: 'delete',
+  backup: true, confirm: '2599', note: 'ทดสอบลบถาวรทั้งปี'
+});
+check('ลบถาวรทั้งปีการศึกษาสำเร็จ', deleted.success === true, deleted.message);
+check('ลบออกจากตารางหลัก 4 รายการ', deleted.data.deletedResults === 4, deleted.data.deletedResults);
+check('สร้างไฟล์สำรอง Excel ให้ก่อนลบ', !!deleted.data.backup && /\.xlsx$/.test(deleted.data.backup.name),
+  deleted.data.backup);
+check('ปีการศึกษา 2599 ไม่เหลือข้อมูล',
+  readTable_(SHEETS.RESULTS).rows.filter(r => str_(r['ปีการศึกษา']) === '2599').length === 0);
+check('ข้อมูลภาคเรียนอื่นยังอยู่ครบ',
+  readTable_(SHEETS.RESULTS).rows.length === RESULTS_BEFORE + 3, readTable_(SHEETS.RESULTS).rows.length);
+
+check('ย้ายเข้าคลังใช้กับคลังข้อมูลไม่ได้',
+  apiClearResults(T2, { scope: 'year', year: '2598', target: 'archive', mode: 'archive', confirm: '2598' }).success === false);
+check('ไม่พบข้อมูลตามเงื่อนไข → แจ้งเตือน',
+  apiClearResults(T2, { scope: 'term', year: '2560', semester: '1', mode: 'archive', confirm: '2560/1' }).success === false);
+check('บันทึกการเคลียร์ลงประวัติการใช้งาน',
+  readLogs_(50).some(l => l.action.indexOf('เคลียร์ข้อมูล') !== -1));
+
+/* ---------- 16. ตรวจสุขภาพระบบ ---------- */
 section('ตรวจสุขภาพระบบ');
 const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);

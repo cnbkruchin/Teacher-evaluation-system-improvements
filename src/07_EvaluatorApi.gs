@@ -34,7 +34,7 @@ function apiEvaluatorContext(token, year, semester) {
     return ok_({
       evaluator: { id: session.id, name: session.name, role: session.role, scope: session.scope },
       years: academicYears_(),
-      semesters: SEMESTERS,
+      semesters: semesterList_(),
       year: y,
       semester: s,
       currentYear: term.year,
@@ -154,8 +154,7 @@ function apiSubmitEvaluation(token, payload) {
         logAction_(session.name, 'evaluator', 'แก้ไขผลการประเมิน',
           teacher.name + ' | ' + termLabel_(year, semester) + ' | เฉลี่ย ' + calc.average);
       } else {
-        const ids = readTable_(SHEETS.RESULTS).rows.map(function (r) { return str_(r['รหัสการประเมิน']); });
-        record['รหัสการประเมิน'] = nextCode_('EVR', ids);
+        record['รหัสการประเมิน'] = nextCodeFromSheet_(SHEETS.RESULTS, 'รหัสการประเมิน', 'EVR');
         record['แก้ไขครั้งที่'] = 0;
         appendRecord_(SHEETS.RESULTS, record);
         message = 'บันทึกผลการประเมินเรียบร้อย';

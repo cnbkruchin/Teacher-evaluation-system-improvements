@@ -149,6 +149,29 @@ function academicYears_() {
   return years;
 }
 
+/** ภาคเรียนที่เปิดใช้งาน (ตั้งค่าได้อย่างอิสระ) */
+function semesterList_() {
+  const raw = str_(getSetting_(SETTING_KEYS.SEMESTERS, DEFAULT_SEMESTERS.join(',')));
+  const allowed = ALL_SEMESTERS.map(function (s) { return s.value; });
+  const list = raw.split(',').map(function (v) { return v.trim(); })
+    .filter(function (v) { return allowed.indexOf(v) !== -1; });
+  return list.length ? list : DEFAULT_SEMESTERS.slice();
+}
+
+/** ชื่อภาคเรียนที่อ่านง่าย */
+function semesterLabel_(value) {
+  const found = ALL_SEMESTERS.filter(function (s) { return s.value === String(value); })[0];
+  return found ? found.label : 'ภาคเรียนที่ ' + value;
+}
+
+/** รายการภาคเรียนพร้อมสถานะเปิด/ปิด สำหรับหน้าตั้งค่า */
+function semesterOptions_() {
+  const enabled = semesterList_();
+  return ALL_SEMESTERS.map(function (s) {
+    return { value: s.value, label: s.label, enabled: enabled.indexOf(s.value) !== -1 };
+  });
+}
+
 function currentTerm_() {
   return {
     year: str_(getSetting_(SETTING_KEYS.CURRENT_YEAR, guessAcademicYear_())),
@@ -157,7 +180,7 @@ function currentTerm_() {
 }
 
 function termLabel_(year, semester) {
-  return 'ภาคเรียนที่ ' + semester + '/' + year;
+  return semesterLabel_(semester) + '/' + year;
 }
 
 // ==================== ตารางเวรประจำวันรายภาคเรียน ====================

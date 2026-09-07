@@ -52,7 +52,7 @@ function apiAdminOverview(token, year, semester) {
     const progress = evaluationProgress_(y || term.year, s || term.semester);
 
     return ok_({
-      filters: { year: y || 'all', semester: s || 'all', years: academicYears_(), semesters: SEMESTERS },
+      filters: { year: y || 'all', semester: s || 'all', years: academicYears_(), semesters: semesterList_() },
       currentTerm: term,
       stats: {
         totalEvaluations: totalEvaluations,
@@ -488,7 +488,7 @@ function apiListDuty(token, year, semester) {
 
     return ok_({
       year: y, semester: s,
-      years: academicYears_(), semesters: SEMESTERS,
+      years: academicYears_(), semesters: semesterList_(),
       days: DAYS, positions: DUTY_POSITIONS, levels: LEVELS,
       rows: roster.rows.sort(function (a, b) {
         const d = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
@@ -519,9 +519,7 @@ function apiSeedDuty(token, year, semester, overwrite) {
         const existing = readTable_(SHEETS.DUTY).rows.filter(function (r) {
           return str_(r['ปีการศึกษา']) === y && str_(r['ภาคเรียน']) === s;
         });
-        existing.map(function (r) { return r._row; })
-          .sort(function (a, b) { return b - a; })
-          .forEach(function (row) { deleteRecord_(SHEETS.DUTY, row); });
+        deleteRecords_(SHEETS.DUTY, existing.map(function (r) { return r._row; }));
       }
 
       const created = seedDutyRosterFromTeachers_(y, s);
@@ -645,9 +643,7 @@ function apiCopyDuty(token, options) {
 
       // ลบของเดิมที่ปลายทางก่อน (เรียงจากล่างขึ้นบนเพื่อไม่ให้เลขแถวเลื่อน)
       if (o.overwrite) {
-        Object.keys(existing).map(function (k) { return existing[k]._row; })
-          .sort(function (a, b) { return b - a; })
-          .forEach(function (row) { deleteRecord_(SHEETS.DUTY, row); });
+        deleteRecords_(SHEETS.DUTY, Object.keys(existing).map(function (k) { return existing[k]._row; }));
       }
 
       const rows = source.rows.map(function (r) {
@@ -881,7 +877,7 @@ function apiSaveSettings(token, patch) {
       updates[SETTING_KEYS.CURRENT_YEAR] = str_(p.currentYear);
     }
     if (p.currentSemester !== undefined) {
-      if (SEMESTERS.indexOf(str_(p.currentSemester)) === -1) return fail_('ภาคเรียนต้องเป็น 1 หรือ 2');
+      if (semesterList_().indexOf(str_(p.currentSemester)) === -1) return fail_('ภาคเรียนต้องเป็น 1 หรือ 2');
       updates[SETTING_KEYS.CURRENT_SEMESTER] = str_(p.currentSemester);
     }
     if (p.academicYears !== undefined) {

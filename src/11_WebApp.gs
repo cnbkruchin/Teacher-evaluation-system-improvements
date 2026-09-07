@@ -16,6 +16,11 @@ function doGet(e) {
     .setFaviconUrl('https://ssl.gstatic.com/docs/spreadsheets/spreadsheets_2020q4.ico');
 }
 
+/** ลิงก์เว็บแอปที่เผยแพร่แล้ว (คืนค่าว่างถ้ายังไม่ได้เผยแพร่) */
+function webAppUrl_() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
 /** ใช้ในไฟล์ HTML: <?!= include('Styles') ?> */
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
@@ -55,8 +60,7 @@ function showApp() {
 /** แสดงลิงก์เว็บแอปเพื่อส่งให้ผู้ประเมิน */
 function showWebAppUrl() {
   const ui = SpreadsheetApp.getUi();
-  let url = '';
-  try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
+  const url = webAppUrl_();
 
   if (!url) {
     ui.alert('🔗 ลิงก์เว็บแอป',
@@ -107,8 +111,7 @@ function healthCheck_() {
   const duty = sheetExists_(SHEETS.DUTY) ? dutyRosterFor_(term.year, term.semester).rows.length : 0;
   push(duty > 0, 'ตารางเวร ' + termLabel_(term.year, term.semester), duty + ' รายการ');
 
-  let webapp = '';
-  try { webapp = ScriptApp.getService().getUrl() || ''; } catch (e) { webapp = ''; }
+  const webapp = webAppUrl_();
   push(!!webapp, 'ลิงก์เว็บแอป', webapp ? 'เผยแพร่แล้ว' : 'ยังไม่ได้เผยแพร่');
 
   return { healthy: items.every(function (i) { return i.ok; }), items: items };

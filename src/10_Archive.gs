@@ -20,8 +20,7 @@ function archiveResultRow_(row, type, note, actor) {
     if (row[h] !== undefined) record[h] = row[h];
   });
 
-  const batchIds = readTable_(SHEETS.ARCHIVE).rows.map(function (r) { return str_(r['รหัสชุดจัดเก็บ']); });
-  record['รหัสชุดจัดเก็บ'] = nextCode_('ARC', batchIds);
+  record['รหัสชุดจัดเก็บ'] = nextCodeFromSheet_(SHEETS.ARCHIVE, 'รหัสชุดจัดเก็บ', 'ARC');
   record['ประเภทการจัดเก็บ'] = type || 'ไม่ระบุ';
   record['วันที่จัดเก็บ'] = new Date();
   record['ผู้จัดเก็บ'] = actor || 'ระบบ';
@@ -101,7 +100,7 @@ function apiListArchive(token, filters) {
       byTerm: summary,
       types: ['ฉบับแก้ไข', 'ลบโดยผู้ดูแลระบบ', 'จัดเก็บภาคเรียน'],
       years: academicYears_(),
-      semesters: SEMESTERS
+      semesters: semesterList_()
     });
   });
 }
@@ -125,15 +124,14 @@ function apiArchiveTerm(token, year, semester, note) {
       if (!targets.length) return fail_('ไม่พบผลการประเมินของ ' + termLabel_(y, s));
 
       const headers = resultHeaders_();
-      const batchIds = readTable_(SHEETS.ARCHIVE).rows.map(function (r) { return str_(r['รหัสชุดจัดเก็บ']); });
+      const firstCode = nextCodeFromSheet_(SHEETS.ARCHIVE, 'รหัสชุดจัดเก็บ', 'ARC');
+      let counter = parseInt(firstCode.split('-')[1], 10);
       const archivedAt = new Date();
 
       const records = targets.map(function (row) {
         const record = {};
         headers.forEach(function (h) { if (row[h] !== undefined) record[h] = row[h]; });
-        const id = nextCode_('ARC', batchIds);
-        batchIds.push(id);
-        record['รหัสชุดจัดเก็บ'] = id;
+        record['รหัสชุดจัดเก็บ'] = 'ARC-' + ('0000' + (counter++)).slice(-4);
         record['ประเภทการจัดเก็บ'] = 'จัดเก็บภาคเรียน';
         record['วันที่จัดเก็บ'] = archivedAt;
         record['ผู้จัดเก็บ'] = session.name || 'Admin';
@@ -142,10 +140,8 @@ function apiArchiveTerm(token, year, semester, note) {
       });
       appendRecords_(SHEETS.ARCHIVE, records);
 
-      // ลบจากตารางหลักจากล่างขึ้นบน เพื่อไม่ให้เลขแถวเลื่อน
-      targets.map(function (r) { return r._row; })
-        .sort(function (a, b) { return b - a; })
-        .forEach(function (row) { deleteRecord_(SHEETS.RESULTS, row); });
+      // ลบออกจากตารางหลักทีเดียว (รวมแถวที่ติดกันเป็นชุด เพื่อความเร็ว)
+      deleteRecords_(SHEETS.RESULTS, targets.map(function (r) { return r._row; }));
 
       logAction_('Admin', 'admin', 'จัดเก็บภาคเรียนเข้าคลัง',
         termLabel_(y, s) + ' จำนวน ' + records.length + ' รายการ');
@@ -184,10 +180,9 @@ function apiRestoreArchive(token, batchIds) {
       });
 
       appendRecords_(SHEETS.RESULTS, restore);
-      targets.filter(function (row) { return skipped.indexOf(str_(row['รหัสการประเมิน'])) === -1; })
-        .map(function (r) { return r._row; })
-        .sort(function (a, b) { return b - a; })
-        .forEach(function (row) { deleteRecord_(SHEETS.ARCHIVE, row); });
+      deleteRecords_(SHEETS.ARCHIVE,
+        targets.filter(function (row) { return skipped.indexOf(str_(row['รหัสการประเมิน'])) === -1; })
+          .map(function (r) { return r._row; }));
 
       logAction_('Admin', 'admin', 'กู้คืนข้อมูลจากคลัง',
         'กู้คืน ' + restore.length + ' รายการ โดย ' + (session.name || 'Admin'));

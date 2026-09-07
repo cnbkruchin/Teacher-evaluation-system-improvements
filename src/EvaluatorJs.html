@@ -31,7 +31,7 @@ App.pages.evaluate = async function (container) {
         '<div class="field"><label>ปีการศึกษา</label><select id="evYear">' +
           optionsHtml(ctx.years, ctx.year) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="evSemester">' +
-          optionsHtml(ctx.semesters, ctx.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) +
+          optionsHtml(ctx.semesters, ctx.semester, function (s) { return { value: s, label: semesterLabel(s) }; }) +
         '</select></div>' +
         '<button class="btn btn--soft" id="btnChangeTerm">เปลี่ยนภาคเรียน</button>' +
       '</div>' +
@@ -245,7 +245,7 @@ Evaluator.viewDetail = async function (id) {
     });
     modal({
       title: '📋 ผลการประเมิน: ' + data.teacher,
-      body: '<p class="small muted" style="margin-bottom:12px">ภาคเรียนที่ ' + esc(data.semester + '/' + data.year) +
+      body: '<p class="small muted" style="margin-bottom:12px">' + esc(semesterLabel(data.semester) + '/' + data.year) +
         (data.revision ? ' · แก้ไขแล้ว ' + data.revision + ' ครั้ง' : '') + '</p>' +
         '<div class="table-wrap"><table><thead><tr><th>เกณฑ์</th><th class="num">คะแนน</th></tr></thead><tbody>' +
         rows.map(function (c) {
@@ -274,7 +274,7 @@ App.pages.myDuty = async function (container) {
 
   container.innerHTML =
     '<div class="card"><div class="card__head">' +
-      '<h3>📅 ตารางเวรประจำวัน — ภาคเรียนที่ ' + esc(ctx.semester + '/' + ctx.year) + '</h3>' +
+      '<h3>📅 ตารางเวรประจำวัน — ' + esc(semesterLabel(ctx.semester) + '/' + ctx.year) + '</h3>' +
       '<div class="spacer"></div><span class="badge badge--brand">' + rows.length + ' รายการ</span></div>' +
       '<p class="card__desc">ตารางเวรของแต่ละภาคเรียนแยกจากกัน — ข้อมูลนี้คือของภาคเรียนที่แสดงด้านบนเท่านั้น</p>' +
       (rows.length ? Object.keys(byDay).map(function (day) {

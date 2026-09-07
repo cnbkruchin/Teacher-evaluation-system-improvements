@@ -373,7 +373,7 @@ App.pages.duty = async function (container) {
       '<div class="filters" style="margin-bottom:0">' +
         '<div class="field"><label>ปีการศึกษา</label><select id="dYear">' + optionsHtml(data.years, data.year) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="dSemester">' +
-          optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) + '</select></div>' +
+          optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: semesterLabel(s) }; }) + '</select></div>' +
         '<button class="btn btn--soft" id="btnLoadDuty">🔄 แสดงตารางเวร</button>' +
         '<div style="flex:1"></div>' +
         '<button class="btn btn--ghost" onclick="Admin.seedDuty()">🪄 สร้างจากค่าเริ่มต้นในทะเบียนครู</button>' +
@@ -392,7 +392,7 @@ App.pages.duty = async function (container) {
       }).join('') + '</div></div>' : '') +
 
     '<div class="card">' +
-      '<div class="card__head"><h3>📋 ตารางเวร ภาคเรียนที่ ' + esc(data.semester + '/' + data.year) + '</h3>' +
+      '<div class="card__head"><h3>📋 ตารางเวร ' + esc(semesterLabel(data.semester) + '/' + data.year) + '</h3>' +
         '<div class="spacer"></div><span class="badge badge--brand">' + data.rows.length + ' รายการ</span></div>' +
       (data.rows.length ? '<div class="table-wrap"><table><thead><tr>' +
         '<th class="num">#</th><th>วัน</th><th>ชื่อ-นามสกุล</th><th>บทบาทในเวร</th><th>จุดปฏิบัติหน้าที่</th>' +
@@ -435,7 +435,7 @@ Admin.editDuty = function (dutyId, presetTeacherId) {
         });
 
     modal({
-      title: row ? '✏️ แก้ไขรายการเวร' : '➕ เพิ่มรายการเวร — ภาคเรียนที่ ' + data.semester + '/' + data.year,
+      title: row ? '✏️ แก้ไขรายการเวร' : '➕ เพิ่มรายการเวร — ' + semesterLabel(data.semester) + '/' + data.year,
       body:
         '<div class="grid grid-2">' +
           '<div class="field" style="grid-column:1/-1"><label>ครู *</label><select id="uTeacher"' +
@@ -513,7 +513,7 @@ Admin.seedDuty = async function () {
   const hasRows = data.rows.length > 0;
   const yes = await confirmDialog({
     title: '🪄 สร้างตารางเวรจากค่าเริ่มต้น',
-    message: 'สร้างรายการเวรของภาคเรียนที่ ' + data.semester + '/' + data.year +
+    message: 'สร้างรายการเวรของ ' + semesterLabel(data.semester) + '/' + data.year +
       ' จากคอลัมน์ "เวรประจำวัน (ค่าเริ่มต้น)" ในทะเบียนครูใช่หรือไม่?',
     warning: hasRows ? 'ภาคเรียนนี้มีตารางเวรอยู่แล้ว ' + data.rows.length +
       ' รายการ — ระบบจะลบของเดิมแล้วสร้างใหม่ทั้งหมด' : '',
@@ -539,10 +539,10 @@ Admin.copyDuty = function () {
         '<div class="field"><label>จากปีการศึกษา</label><select id="cFromYear">' + optionsHtml(data.years, data.year) + '</select></div>' +
         '<div class="field"><label>จากภาคเรียน</label><select id="cFromSem">' +
           optionsHtml(data.semesters, data.semester === '1' ? '2' : '1', function (s) {
-            return { value: s, label: 'ภาคเรียนที่ ' + s }; }) + '</select></div>' +
+            return { value: s, label: semesterLabel(s) }; }) + '</select></div>' +
         '<div class="field"><label>ไปยังปีการศึกษา</label><select id="cToYear">' + optionsHtml(data.years, data.year) + '</select></div>' +
         '<div class="field"><label>ไปยังภาคเรียน</label><select id="cToSem">' +
-          optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: 'ภาคเรียนที่ ' + s }; }) + '</select></div>' +
+          optionsHtml(data.semesters, data.semester, function (s) { return { value: s, label: semesterLabel(s) }; }) + '</select></div>' +
       '</div>' +
       '<label class="checkbox"><input type="checkbox" id="cOverwrite">' +
         '<span>เขียนทับข้อมูลเดิมที่ปลายทาง<div class="small muted">หากปลายทางมีรายการอยู่แล้ว จะถูกลบและแทนที่</div></span></label>',
@@ -653,21 +653,20 @@ App.pages.settings = async function (container) {
     '<div class="grid grid-2">' +
 
       '<div class="card"><div class="card__head"><h3>📅 ปีการศึกษาและภาคเรียน</h3></div>' +
-        '<div class="grid grid-2">' +
-          '<div class="field"><label>ปีการศึกษาปัจจุบัน</label>' +
-            '<input type="text" id="sYear" value="' + esc(s.currentYear) + '" maxlength="4"></div>' +
-          '<div class="field"><label>ภาคเรียนปัจจุบัน</label><select id="sSemester">' +
-            optionsHtml(['1', '2'], s.currentSemester, function (x) { return { value: x, label: 'ภาคเรียนที่ ' + x }; }) + '</select></div>' +
+        '<p class="card__desc">ตั้งค่าปีการศึกษาและภาคเรียนได้อย่างอิสระที่เมนูเฉพาะ ' +
+          'พร้อมดูจำนวนข้อมูลของแต่ละภาคเรียน</p>' +
+        '<div class="alert alert--info"><span>📆</span><span>ภาคเรียนที่ใช้งานอยู่: <b>' +
+          esc(semesterLabel(s.currentSemester) + '/' + s.currentYear) + '</b></span></div>' +
+        '<div class="btn-row">' +
+          '<button class="btn btn--soft" onclick="App.go(\'terms\')">📆 ตั้งค่าปีการศึกษาและภาคเรียน</button>' +
+          '<button class="btn btn--ghost" onclick="App.go(\'cleanup\')">🧹 เคลียร์ข้อมูลการประเมิน</button>' +
         '</div>' +
-        '<div class="field"><label>ปีการศึกษาที่เปิดใช้งาน</label>' +
-          '<input type="text" id="sYears" value="' + esc(s.academicYears) + '" placeholder="2567,2568,2569">' +
-          '<div class="hint">คั่นด้วยเครื่องหมายจุลภาค — ใช้เป็นตัวเลือกในหน้าต่าง ๆ</div></div>' +
-        '<div class="switch-row"><div><div class="t">อนุญาตให้ประเมินซ้ำ/แก้ไขผล</div>' +
+        '<div class="switch-row" style="margin-top:10px"><div><div class="t">อนุญาตให้ประเมินซ้ำ/แก้ไขผล</div>' +
           '<div class="d">ระบบจะเก็บฉบับเดิมไว้ในคลังข้อมูลเสมอ</div></div>' +
-          '<input type="checkbox" id="sReeval" ' + (s.allowReevaluate ? 'checked' : '') + ' style="width:18px;height:18px"></div>' +
+          '<input type="checkbox" id="sReeval" ' + (s.allowReevaluate ? 'checked' : '') + '></div>' +
         '<div class="switch-row"><div><div class="t">คิดคะแนนแบบถ่วงน้ำหนัก</div>' +
           '<div class="d">ใช้คอลัมน์น้ำหนักในหน้าเกณฑ์การประเมิน</div></div>' +
-          '<input type="checkbox" id="sWeights" ' + (s.useWeights ? 'checked' : '') + ' style="width:18px;height:18px"></div>' +
+          '<input type="checkbox" id="sWeights" ' + (s.useWeights ? 'checked' : '') + '></div>' +
       '</div>' +
 
       '<div class="card"><div class="card__head"><h3>🏫 ข้อมูลสำหรับรายงาน</h3></div>' +
@@ -737,9 +736,6 @@ App.pages.settings = async function (container) {
   $('btnSaveSettings').onclick = async function () {
     try {
       await apiWithButton(this, 'apiSaveSettings', App.session.token, {
-        currentYear: $('sYear').value.trim(),
-        currentSemester: $('sSemester').value,
-        academicYears: $('sYears').value.trim(),
         organization: $('sOrg').value.trim(),
         reportSigner: $('sSigner').value.trim(),
         reportSignerRole: $('sSignerRole').value.trim(),

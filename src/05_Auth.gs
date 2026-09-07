@@ -20,6 +20,7 @@ function apiBootstrap() {
       currentSemester: term.semester,
       recoveryConfigured: installed ? !!str_(getSetting_(SETTING_KEYS.RECOVERY_EMAIL, '')) : false,
       showEvaluatorList: installed ? getSettingBool_(SETTING_KEYS.SHOW_EVALUATOR_LIST, 'ใช่') : true,
+      webAppUrl: webAppUrl_(),
       evaluators: []
     };
 

@@ -265,7 +265,7 @@ function applyValidations_() {
   apply(SHEETS.EVALUATORS, 'ขอบเขต (ระดับชั้น/วัน)', LEVELS.concat(DAYS), 200);
   apply(SHEETS.EVALUATORS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 200);
 
-  apply(SHEETS.DUTY, 'ภาคเรียน', SEMESTERS, 2000);
+  apply(SHEETS.DUTY, 'ภาคเรียน', ALL_SEMESTERS.map(function (x) { return x.value; }), 2000);
   apply(SHEETS.DUTY, 'เวรประจำวัน', DAYS, 2000);
   apply(SHEETS.DUTY, 'บทบาทในเวร', DUTY_POSITIONS, 2000);
   apply(SHEETS.DUTY, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 2000);

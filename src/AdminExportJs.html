@@ -34,7 +34,7 @@ App.pages.export = async function (container) {
           optionsHtml(data.years, data.year) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="exSemester">' +
           optionsHtml(data.semesters, data.semester, function (s) {
-            return { value: s, label: 'ภาคเรียนที่ ' + s }; }) + '</select></div>' +
+            return { value: s, label: semesterLabel(s) }; }) + '</select></div>' +
         '<button class="btn btn--soft" id="btnLoadTerm">🔄 โหลดข้อมูลภาคเรียนนี้</button>' +
         '<label class="checkbox" style="margin-left:8px"><input type="checkbox" id="optIncludeArchive">' +
           '<span>รวมข้อมูลจากคลังย้อนหลังด้วย<div class="small muted">ใช้เมื่อภาคเรียนนั้นถูกปิดและจัดเก็บไปแล้ว</div></span></label>' +

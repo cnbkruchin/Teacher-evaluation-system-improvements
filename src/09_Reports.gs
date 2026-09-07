@@ -175,7 +175,7 @@ function apiExportCandidates(token, year, semester) {
 
     return ok_({
       year: y, semester: s,
-      years: academicYears_(), semesters: SEMESTERS,
+      years: academicYears_(), semesters: semesterList_(),
       levels: LEVELS, days: DAYS,
       criteria: loadCriteria_(),
       candidates: candidates

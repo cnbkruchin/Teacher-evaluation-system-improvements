@@ -1,6 +1,10 @@
 /* จำลอง Google Apps Script services เพื่อทดสอบตรรกะฝั่งเซิร์ฟเวอร์ด้วย Node */
 const crypto = require('crypto');
 
+/* ตัวนับการเรียกใช้ Google Sheets — ใช้วัดประสิทธิภาพ (แต่ละครั้ง = 1 รอบสื่อสารกับเซิร์ฟเวอร์จริง) */
+const ops = { reads: 0, writes: 0, deletes: 0 };
+function resetOps() { ops.reads = 0; ops.writes = 0; ops.deletes = 0; }
+
 function chainable(target) {
   return new Proxy(target, {
     get(obj, prop) {
@@ -27,6 +31,7 @@ class Sheet {
     }
   }
   getLastRow() {
+    ops.reads++;
     let last = 0;
     this.data.forEach((row, i) => {
       if (row.some(v => v !== '' && v !== null && v !== undefined)) last = i + 1;
@@ -34,6 +39,7 @@ class Sheet {
     return last;
   }
   getLastColumn() {
+    ops.reads++;
     let last = 0;
     this.data.forEach(row => {
       row.forEach((v, j) => { if (v !== '' && v !== null && v !== undefined) last = Math.max(last, j + 1); });
@@ -44,13 +50,14 @@ class Sheet {
   getMaxRows() { return Math.max(1000, this.getLastRow()); }
   getRange(r, c, nr, nc) { return makeRange(this, r, c, nr === undefined ? 1 : nr, nc === undefined ? 1 : nc); }
   appendRow(values) {
+    ops.writes++;
     const r = this.getLastRow() + 1;
     this._ensure(r, values.length);
     values.forEach((v, i) => { this.data[r - 1][i] = v; });
     return this;
   }
-  deleteRow(r) { this.data.splice(r - 1, 1); return this; }
-  deleteRows(r, n) { this.data.splice(r - 1, n); return this; }
+  deleteRow(r) { ops.deletes++; this.data.splice(r - 1, 1); return this; }
+  deleteRows(r, n) { ops.deletes++; this.data.splice(r - 1, n); return this; }
   clear() { this.data = []; return this; }
   hideSheet() { this.hidden = true; return this; }
   getProtections() { return []; }
@@ -64,6 +71,7 @@ function makeRange(sheet, row, col, numRows, numCols) {
   let proxy;
   const range = {
     getValues() {
+      ops.reads++;
       const out = [];
       for (let r = 0; r < numRows; r++) {
         const line = [];
@@ -72,13 +80,15 @@ function makeRange(sheet, row, col, numRows, numCols) {
       }
       return out;
     },
-    getValue() { return sheet._cell(row, col); },
+    getValue() { ops.reads++; return sheet._cell(row, col); },
     setValues(values) {
+      ops.writes++;
       sheet._ensure(row + numRows - 1, col + numCols - 1);
       values.forEach((line, r) => line.forEach((v, c) => { sheet.data[row + r - 1][col + c - 1] = v; }));
       return proxy;
     },
     setValue(v) {
+      ops.writes++;
       sheet._ensure(row + numRows - 1, col + numCols - 1);
       for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) sheet.data[row + r - 1][col + c - 1] = v;
       return proxy;
@@ -227,6 +237,23 @@ global.HtmlService = {
   createHtmlOutputFromFile: () => ({ getContent: () => '' })
 };
 
+const cacheStore = new Map();
+global.CacheService = {
+  getScriptCache: () => ({
+    get: k => (cacheStore.has(k) ? cacheStore.get(k) : null),
+    put: (k, v) => { cacheStore.set(k, v); },
+    remove: k => { cacheStore.delete(k); },
+    removeAll: keys => { (keys || []).forEach(k => cacheStore.delete(k)); },
+    getAll: keys => {
+      const out = {};
+      (keys || []).forEach(k => { if (cacheStore.has(k)) out[k] = cacheStore.get(k); });
+      return out;
+    }
+  }),
+  getUserCache() { return this.getScriptCache(); },
+  getDocumentCache() { return this.getScriptCache(); }
+};
+
 global.Logger = { log: () => {} };
 
-module.exports = { store, activeSs, Spreadsheet, Sheet };
+module.exports = { store, activeSs, Spreadsheet, Sheet, ops, resetOps, cacheStore };
