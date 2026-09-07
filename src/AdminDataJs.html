@@ -106,12 +106,16 @@ Admin.editTeacher = function (id) {
   });
 };
 
-/** แยกคำนำหน้า/ชื่อ/นามสกุล จากชื่อเต็ม */
+/**
+ * แยกคำนำหน้า/ชื่อ/นามสกุล จากชื่อเต็ม
+ * เทียบคำนำหน้าที่ยาวกว่าก่อน เพื่อไม่ให้ "นางสาว" ถูกตัดเหลือ "นาง"
+ */
 Admin.splitName = function (fullName) {
   let prefix = '';
-  PREFIX_LIST.forEach(function (p) {
-    if (!prefix && fullName.indexOf(p) === 0) prefix = p;
-  });
+  PREFIX_LIST.slice().sort(function (a, b) { return b.length - a.length; })
+    .forEach(function (p) {
+      if (!prefix && fullName.indexOf(p) === 0) prefix = p;
+    });
   const rest = fullName.substring(prefix.length).trim().split(/\s+/);
   return { prefix: prefix || 'นาย', firstName: rest[0] || '', lastName: rest.slice(1).join(' ') || '' };
 };
@@ -163,21 +167,186 @@ Admin.teacherHistory = async function (key) {
 };
 
 Admin.importTeachers = function () {
-  modal({
+  const state = { file: null, preview: null, updateExisting: false };
+
+  const m = modal({
+    wide: true,
     title: '📥 นำเข้ารายชื่อครู',
     body:
-      '<div class="alert alert--info"><span>💡</span><span>คัดลอกข้อมูลจาก Excel มาวางได้เลย ' +
-        'หนึ่งบรรทัดต่อหนึ่งคน โดยเรียงคอลัมน์ดังนี้<br>' +
-        '<b>คำนำหน้า | ชื่อ | นามสกุล | ระดับชั้น | เวรประจำวัน | อีเมล</b><br>' +
-        '(สามคอลัมน์แรกจำเป็น ที่เหลือเว้นได้)</span></div>' +
-      '<div class="field"><textarea id="importText" rows="10" placeholder="นาย	สมชาย	ใจดี	ม.1	จันทร์	somchai@school.ac.th"></textarea></div>',
-    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnImport">📥 นำเข้า</button>',
+      '<div class="tabs" style="padding:0 0 12px">' +
+        '<button class="tab active" id="impTabFile">📄 อัปโหลดไฟล์ CSV / Excel</button>' +
+        '<button class="tab" id="impTabPaste">📋 วางข้อความ</button>' +
+      '</div>' +
+
+      '<div id="impFilePane">' +
+        '<div class="alert alert--info"><span>💡</span><span>' +
+          'ยังไม่มีไฟล์? ดาวน์โหลดเทมเพลตที่กรอกง่ายไปใช้ได้เลย ' +
+          'ระบบรองรับไฟล์ <b>.xlsx .xls .ods .csv .tsv</b> และอ่านภาษาไทยจาก Excel ได้ทั้งแบบ UTF-8 และแบบเดิม' +
+        '</span></div>' +
+        '<div class="btn-row" style="margin-bottom:14px">' +
+          '<button class="btn btn--soft" id="btnTplXlsx">⬇️ ดาวน์โหลดเทมเพลต Excel</button>' +
+          '<button class="btn btn--ghost" id="btnTplCsv">⬇️ ดาวน์โหลดเทมเพลต CSV</button>' +
+        '</div>' +
+
+        '<div id="dropZone" style="border:2px dashed var(--border-2);border-radius:var(--radius);' +
+          'padding:26px 18px;text-align:center;cursor:pointer;transition:.16s;background:var(--surface-2)">' +
+          '<div style="font-size:34px;margin-bottom:6px">📁</div>' +
+          '<div style="font-weight:600" id="dropText">ลากไฟล์มาวางที่นี่ หรือกดเพื่อเลือกไฟล์</div>' +
+          '<div class="small muted" style="margin-top:4px">ขนาดไม่เกิน 6 MB · สูงสุด 2,000 แถว</div>' +
+          '<input type="file" id="impFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" style="display:none">' +
+        '</div>' +
+
+        '<label class="checkbox" style="margin-top:12px"><input type="checkbox" id="impUpdate">' +
+          '<span>อัปเดตข้อมูลเดิมถ้าพบชื่อหรือรหัสครูซ้ำ' +
+          '<div class="small muted">ถ้าไม่ติ๊ก ระบบจะข้ามรายการที่ซ้ำ</div></span></label>' +
+
+        '<div id="impResult"></div>' +
+      '</div>' +
+
+      '<div id="impPastePane" class="hidden">' +
+        '<div class="alert alert--info"><span>💡</span><span>คัดลอกจาก Excel มาวางได้เลย หนึ่งบรรทัดต่อหนึ่งคน<br>' +
+          '<b>คำนำหน้า | ชื่อ | นามสกุล | ระดับชั้น | เวรประจำวัน | อีเมล</b> (สามคอลัมน์แรกจำเป็น)</span></div>' +
+        '<div class="field"><textarea id="importText" rows="9" ' +
+          'placeholder="นาย&#9;สมชาย&#9;ใจดี&#9;ม.1&#9;จันทร์&#9;somchai@school.ac.th"></textarea></div>' +
+        '<button class="btn" id="btnImportPaste">📥 นำเข้าจากข้อความ</button>' +
+      '</div>',
+    footer: '<button class="btn btn--ghost" data-close>ปิด</button>' +
+      '<button class="btn btn--ok hidden" id="btnDoImport">✅ นำเข้าข้อมูล</button>',
     onOpen: function (wrap, close) {
-      wrap.querySelector('#btnImport').onclick = async function () {
+      const $$ = function (sel) { return wrap.querySelector(sel); };
+
+      $$('#impTabFile').onclick = function () {
+        this.classList.add('active'); $$('#impTabPaste').classList.remove('active');
+        $$('#impFilePane').classList.remove('hidden'); $$('#impPastePane').classList.add('hidden');
+        $$('#btnDoImport').classList.toggle('hidden', !state.preview);
+      };
+      $$('#impTabPaste').onclick = function () {
+        this.classList.add('active'); $$('#impTabFile').classList.remove('active');
+        $$('#impPastePane').classList.remove('hidden'); $$('#impFilePane').classList.add('hidden');
+        $$('#btnDoImport').classList.add('hidden');
+      };
+
+      // ---- ดาวน์โหลดเทมเพลต ----
+      const downloadTemplate = async function (button, format) {
         try {
-          const res = await apiWithButton(this, 'apiImportTeachers', App.session.token, wrap.querySelector('#importText').value);
+          const t = await apiWithButton(button, 'apiDownloadTeacherTemplate', App.session.token, format);
+          if (!downloadBase64(t.base64, t.name, t.mimeType)) {
+            toast('เบราว์เซอร์ไม่อนุญาตให้ดาวน์โหลดจากหน้าต่างนี้ กรุณาเปิดระบบผ่านลิงก์เว็บแอป', 'warn', 8000);
+          } else {
+            toast('ดาวน์โหลดเทมเพลตแล้ว: ' + t.name, 'ok');
+          }
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+      $$('#btnTplXlsx').onclick = function () { downloadTemplate(this, 'xlsx'); };
+      $$('#btnTplCsv').onclick = function () { downloadTemplate(this, 'csv'); };
+
+      // ---- เลือก/ลากไฟล์ ----
+      const zone = $$('#dropZone');
+      const input = $$('#impFile');
+      zone.onclick = function () { input.click(); };
+      zone.ondragover = function (e) {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--brand-500)';
+        zone.style.background = 'var(--brand-50)';
+      };
+      zone.ondragleave = function () {
+        zone.style.borderColor = 'var(--border-2)';
+        zone.style.background = 'var(--surface-2)';
+      };
+      zone.ondrop = function (e) {
+        e.preventDefault();
+        zone.ondragleave();
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+      };
+      input.onchange = function () { if (this.files[0]) handleFile(this.files[0]); };
+      $$('#impUpdate').onchange = function () {
+        state.updateExisting = this.checked;
+        if (state.file) handleFile(state.file);
+      };
+
+      function handleFile(file) {
+        if (file.size > 6 * 1024 * 1024) { toast('ไฟล์ใหญ่เกิน 6 MB', 'warn'); return; }
+        state.file = file;
+        $$('#dropText').textContent = '📄 ' + file.name;
+        $$('#impResult').innerHTML = '<div class="page-loading"><span class="spinner spinner--dark"></span>' +
+          '<span>กำลังอ่านไฟล์...</span></div>';
+        $$('#btnDoImport').classList.add('hidden');
+
+        const reader = new FileReader();
+        reader.onerror = function () {
+          $$('#impResult').innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>อ่านไฟล์ไม่สำเร็จ</span></div>';
+        };
+        reader.onload = async function () {
+          try {
+            const base64 = String(reader.result).split(',')[1];
+            const preview = await api('apiPreviewTeacherImport', App.session.token,
+              { fileName: file.name, mimeType: file.type, base64: base64 },
+              { updateExisting: state.updateExisting });
+            state.preview = preview;
+            renderPreview(preview);
+          } catch (err) {
+            state.preview = null;
+            $$('#impResult').innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' +
+              esc(err.message).replace(/\n/g, '<br>') + '</span></div>';
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function renderPreview(p) {
+        const s = p.summary;
+        const badge = function (label, count, cls) {
+          return count ? '<span class="badge ' + cls + '">' + label + ' ' + count + '</span> ' : '';
+        };
+        const statusBadge = {
+          'new': '<span class="badge badge--ok">เพิ่มใหม่</span>',
+          'update': '<span class="badge badge--info">อัปเดต</span>',
+          'duplicate': '<span class="badge badge--muted">ข้าม</span>',
+          'error': '<span class="badge badge--danger">ผิดพลาด</span>'
+        };
+
+        $$('#impResult').innerHTML =
+          '<div class="card" style="margin-top:14px;box-shadow:none;border-color:var(--border)">' +
+            '<div class="card__head"><h3>ตรวจสอบข้อมูลก่อนนำเข้า</h3><div class="spacer"></div>' +
+              badge('เพิ่มใหม่', s.new, 'badge--ok') + badge('อัปเดต', s.update, 'badge--info') +
+              badge('ข้าม', s.duplicate, 'badge--muted') + badge('ผิดพลาด', s.error, 'badge--danger') +
+            '</div>' +
+            (p.matchedColumns.length
+              ? '<p class="small muted">จับคู่คอลัมน์ได้: ' +
+                p.matchedColumns.map(function (c) { return esc(c.column); }).join(', ') +
+                (p.unknownColumns.length ? ' · <span style="color:var(--warn)">ไม่รู้จัก (ข้าม): ' +
+                  p.unknownColumns.map(esc).join(', ') + '</span>' : '') + '</p>'
+              : '<p class="small muted">ไม่พบหัวตาราง — อ่านตามลำดับคอลัมน์มาตรฐาน</p>') +
+            '<div class="table-wrap scroll-y" style="max-height:340px"><table><thead><tr>' +
+              '<th>แถว</th><th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>เวร</th><th>สถานะ</th><th>หมายเหตุ</th>' +
+            '</tr></thead><tbody>' +
+              p.rows.map(function (r) {
+                return '<tr><td class="num">' + r.line + '</td>' +
+                  '<td><b>' + esc(r.prefix + r.firstName + ' ' + r.lastName) + '</b></td>' +
+                  '<td>' + esc(r.level || '-') + '</td><td>' + esc(r.day || '-') + '</td>' +
+                  '<td>' + (statusBadge[r.status_] || '') + '</td>' +
+                  '<td class="small muted">' + esc(r.message || '') + '</td></tr>';
+              }).join('') +
+            '</tbody></table></div>' +
+          '</div>';
+
+        const canImport = (s.new + s.update) > 0;
+        $$('#btnDoImport').classList.toggle('hidden', !canImport);
+        $$('#btnDoImport').textContent = '✅ นำเข้า ' + (s.new + s.update) + ' รายการ';
+      }
+
+      // ---- นำเข้าจริง ----
+      $$('#btnDoImport').onclick = async function () {
+        if (!state.preview) return;
+        try {
+          const res = await apiWithButton(this, 'apiCommitTeacherImport', App.session.token, {
+            rows: state.preview.rows,
+            updateExisting: state.updateExisting,
+            fileName: state.preview.fileName
+          });
           close();
-          toast('นำเข้าเรียบร้อย: เพิ่ม ' + res.added + ' คน', 'ok');
+          toast('นำเข้าเรียบร้อย: เพิ่ม ' + res.added + ' คน' +
+            (res.updated ? ', อัปเดต ' + res.updated + ' คน' : ''), 'ok', 7000);
           if (res.skipped && res.skipped.length) {
             toast('ข้าม ' + res.skipped.length + ' รายการ: ' + res.skipped.slice(0, 3).join(', ') +
               (res.skipped.length > 3 ? ' ...' : ''), 'warn', 9000);
@@ -185,8 +354,23 @@ Admin.importTeachers = function () {
           App.go('teachers');
         } catch (err) { toast(err.message, 'danger'); }
       };
+
+      // ---- นำเข้าจากข้อความ (แบบเดิม) ----
+      $$('#btnImportPaste').onclick = async function () {
+        try {
+          const res = await apiWithButton(this, 'apiImportTeachers', App.session.token,
+            $$('#importText').value);
+          close();
+          toast('นำเข้าเรียบร้อย: เพิ่ม ' + res.added + ' คน', 'ok');
+          if (res.skipped && res.skipped.length) {
+            toast('ข้าม ' + res.skipped.length + ' รายการ', 'warn');
+          }
+          App.go('teachers');
+        } catch (err) { toast(err.message, 'danger'); }
+      };
     }
   });
+  return m;
 };
 
 /* ==================== ผู้ประเมิน ==================== */

@@ -23,14 +23,15 @@ function apiAdminOverview(token, year, semester) {
     const byLevel = {}, byDay = {}, byRole = {};
 
     summary.forEach(function (t) {
-      if (ratingDistribution[t.rating] !== undefined) ratingDistribution[t.rating]++;
+      const score = t.final;
+      if (ratingDistribution[t.finalRating] !== undefined) ratingDistribution[t.finalRating]++;
       if (t.level) {
         byLevel[t.level] = byLevel[t.level] || { sum: 0, n: 0 };
-        byLevel[t.level].sum += t.average; byLevel[t.level].n++;
+        byLevel[t.level].sum += score; byLevel[t.level].n++;
       }
       if (t.dutyDay) {
         byDay[t.dutyDay] = byDay[t.dutyDay] || { sum: 0, n: 0 };
-        byDay[t.dutyDay].sum += t.average; byDay[t.dutyDay].n++;
+        byDay[t.dutyDay].sum += score; byDay[t.dutyDay].n++;
       }
     });
 
@@ -45,7 +46,7 @@ function apiAdminOverview(token, year, semester) {
     });
 
     const avgAll = summary.length
-      ? Math.round((summary.reduce(function (a, b) { return a + b.average; }, 0) / summary.length) * 100) / 100
+      ? Math.round((summary.reduce(function (a, b) { return a + b.final; }, 0) / summary.length) * 100) / 100
       : 0;
 
     // ความคืบหน้า: จำนวนคู่ (ผู้ประเมิน × ครูที่มีสิทธิ์) ที่ประเมินแล้ว
@@ -68,8 +69,9 @@ function apiAdminOverview(token, year, semester) {
       byLevel: averageMap_(byLevel),
       byDay: averageMap_(byDay),
       byRole: byRole,
-      topTeachers: summary.slice().sort(function (a, b) { return b.average - a.average; }).slice(0, 10),
-      lowTeachers: summary.slice().sort(function (a, b) { return a.average - b.average; }).slice(0, 5),
+      weights: scoreWeightInfo_(),
+      topTeachers: summary.slice().sort(function (a, b) { return b.final - a.final; }).slice(0, 10),
+      lowTeachers: summary.slice().sort(function (a, b) { return a.final - b.final; }).slice(0, 5),
       recentLogs: readLogs_(8)
     });
   });

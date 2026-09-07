@@ -8,7 +8,7 @@
 const APP = {
   NAME: 'ระบบประเมินผลการปฏิบัติงานครู',
   SUBTITLE: 'กลุ่มบริหารงานกิจการนักเรียน',
-  VERSION: '3.1.0',
+  VERSION: '3.2.0',
   TIMEZONE: 'Asia/Bangkok'
 };
 
@@ -74,6 +74,18 @@ const CRITERIA_COL_PREFIX = 'ข้อ ';
 
 /** ระดับผลการประเมินเริ่มต้น (ผู้ดูแลระบบปรับเกณฑ์คะแนนได้ในหน้าตั้งค่า) */
 const DEFAULT_THRESHOLDS = { excellent: 4.5, great: 3.5, good: 2.5, fair: 1.5 };
+
+/**
+ * น้ำหนักของกลุ่มผู้ประเมินแต่ละกลุ่ม (หน่วยเป็น %)
+ * ใช้คำนวณ "คะแนนสุทธิ" ของครูแต่ละคน โดยนำคะแนนเฉลี่ยของแต่ละกลุ่มมาถ่วงน้ำหนักรวมกัน
+ * ผู้ดูแลระบบปรับได้เองในเมนู "น้ำหนักกลุ่มผู้ประเมิน"
+ */
+const DEFAULT_ROLE_WEIGHTS = {
+  VICE_DIRECTOR: 40,
+  HEAD_AFFAIRS: 30,
+  HEAD_LEVEL: 20,
+  HEAD_DUTY: 10
+};
 const RATING_LABELS = ['ดีเยี่ยม', 'ดีมาก', 'ดี', 'พอใช้', 'ปรับปรุง'];
 
 const SCORE_MEANING = [
@@ -104,6 +116,9 @@ const SETTING_KEYS = {
   ACADEMIC_YEARS: 'academic_years',
   SEMESTERS: 'semesters',
   USE_WEIGHTS: 'use_criteria_weights',
+  ROLE_WEIGHTS: 'evaluator_role_weights',
+  USE_ROLE_WEIGHTS: 'use_evaluator_role_weights',
+  NORMALIZE_ROLE_WEIGHTS: 'normalize_role_weights',
   THRESHOLDS: 'rating_thresholds',
   PASSWORD_ITERATIONS: 'password_iterations',
   MAX_LOGIN_ATTEMPTS: 'max_login_attempts',
@@ -128,6 +143,9 @@ const SETTING_DEFAULTS = {
   academic_years: '',
   semesters: '1,2',
   use_criteria_weights: 'ไม่',
+  evaluator_role_weights: JSON.stringify(DEFAULT_ROLE_WEIGHTS),
+  use_evaluator_role_weights: 'ไม่',
+  normalize_role_weights: 'ใช่',
   rating_thresholds: JSON.stringify(DEFAULT_THRESHOLDS),
   password_iterations: '4096',
   max_login_attempts: '5',
@@ -155,6 +173,9 @@ const SETTING_DESCRIPTIONS = {
   academic_years: 'ปีการศึกษาที่เปิดใช้งาน คั่นด้วย , เช่น 2567,2568,2569',
   semesters: 'ภาคเรียนที่เปิดใช้งาน คั่นด้วย , (1=ภาคเรียนที่ 1, 2=ภาคเรียนที่ 2, 3=ภาคฤดูร้อน)',
   use_criteria_weights: 'คิดคะแนนแบบถ่วงน้ำหนักตามคอลัมน์น้ำหนักหรือไม่ (ใช่/ไม่)',
+  evaluator_role_weights: 'น้ำหนัก % ของผู้ประเมินแต่ละกลุ่ม ใช้คิดคะแนนสุทธิ (JSON)',
+  use_evaluator_role_weights: 'คิดคะแนนสุทธิแบบถ่วงน้ำหนักตามกลุ่มผู้ประเมินหรือไม่ (ใช่/ไม่)',
+  normalize_role_weights: 'ปรับสัดส่วนน้ำหนักอัตโนมัติเมื่อครูไม่ได้รับการประเมินจากบางกลุ่ม (ใช่/ไม่)',
   rating_thresholds: 'เกณฑ์ตัดระดับผลการประเมิน (JSON)',
   password_iterations: 'จำนวนรอบการเข้ารหัสรหัสผ่านผู้ประเมิน',
   max_login_attempts: 'จำนวนครั้งที่กรอกรหัสผ่านผิดได้ก่อนถูกล็อก',
@@ -194,7 +215,7 @@ const ARCHIVE_EXTRA_HEADERS = ['รหัสชุดจัดเก็บ', '�
 
 const SUMMARY_HEADERS = ['ลำดับ', 'รหัสครู', 'ชื่อ-นามสกุล', 'ระดับชั้น', 'เวรประจำวัน', 'ปีการศึกษา', 'ภาคเรียน',
   'คะแนน รอง ผอ.', 'คะแนน หน.กิจการนักเรียน', 'คะแนน หน.ระดับชั้น', 'คะแนน หน.เวรประจำวัน',
-  'คะแนนเฉลี่ยรวม', 'ระดับผลการประเมิน', 'จำนวนครั้งที่ถูกประเมิน'];
+  'คะแนนเฉลี่ยรวม', 'คะแนนสุทธิ (ถ่วงน้ำหนัก)', 'ระดับผลการประเมิน', 'จำนวนครั้งที่ถูกประเมิน'];
 
 const LOG_HEADERS = ['วันที่-เวลา', 'ผู้ใช้', 'บทบาท', 'การกระทำ', 'รายละเอียด', 'บัญชี Google'];
 

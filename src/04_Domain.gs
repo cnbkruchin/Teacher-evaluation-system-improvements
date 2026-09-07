@@ -130,6 +130,93 @@ function computeScore_(scores, criteria) {
   };
 }
 
+// ==================== น้ำหนักของกลุ่มผู้ประเมิน (คะแนนสุทธิ) ====================
+
+/** อ่านน้ำหนัก % ของแต่ละกลุ่มผู้ประเมินจากการตั้งค่า */
+function roleWeights_() {
+  const weights = {};
+  Object.keys(DEFAULT_ROLE_WEIGHTS).forEach(function (k) { weights[k] = DEFAULT_ROLE_WEIGHTS[k]; });
+  try {
+    const parsed = JSON.parse(str_(getSetting_(SETTING_KEYS.ROLE_WEIGHTS, JSON.stringify(DEFAULT_ROLE_WEIGHTS))));
+    Object.keys(weights).forEach(function (k) {
+      const v = Number(parsed[k]);
+      if (!isNaN(v) && v >= 0) weights[k] = v;
+    });
+  } catch (e) { /* ใช้ค่าเริ่มต้นเมื่อข้อมูลเสียหาย */ }
+  return weights;
+}
+
+function useRoleWeights_() {
+  return getSettingBool_(SETTING_KEYS.USE_ROLE_WEIGHTS, 'ไม่');
+}
+
+function normalizeRoleWeights_() {
+  return getSettingBool_(SETTING_KEYS.NORMALIZE_ROLE_WEIGHTS, 'ใช่');
+}
+
+/**
+ * คำนวณ "คะแนนสุทธิ" ของครู 1 คน จากคะแนนเฉลี่ยของแต่ละกลุ่มผู้ประเมิน
+ *
+ *   คะแนนสุทธิ = ผลรวมของ (คะแนนเฉลี่ยของกลุ่ม × น้ำหนักของกลุ่ม) ÷ ผลรวมน้ำหนักที่ใช้จริง
+ *
+ * - ถ้าเปิด "ปรับสัดส่วนอัตโนมัติ" จะหารด้วยผลรวมน้ำหนักเฉพาะกลุ่มที่มีการประเมินจริง
+ *   (ครูที่ขาดการประเมินจากบางกลุ่มจึงไม่เสียเปรียบ)
+ * - ถ้าปิด จะหารด้วยผลรวมน้ำหนักทั้งหมด (กลุ่มที่ไม่มีคะแนนถือเป็น 0)
+ *
+ * @param {Object} averagesByRoleKey เช่น {VICE_DIRECTOR: 4.5, HEAD_LEVEL: 4.0}
+ * @return {{net: number, rating: string, totalWeight: number, usedWeight: number,
+ *           breakdown: Array, enabled: boolean}}
+ */
+function computeNetScore_(averagesByRoleKey, options) {
+  const o = options || {};
+  const weights = o.weights || roleWeights_();
+  const normalize = (o.normalize === undefined) ? normalizeRoleWeights_() : !!o.normalize;
+
+  let weightedSum = 0, usedWeight = 0, totalWeight = 0;
+  const breakdown = [];
+
+  Object.keys(ROLES).forEach(function (key) {
+    const weight = Number(weights[key]) || 0;
+    totalWeight += weight;
+    const average = averagesByRoleKey[key];
+    const hasScore = (average !== null && average !== undefined && !isNaN(average));
+    if (hasScore && weight > 0) {
+      weightedSum += Number(average) * weight;
+      usedWeight += weight;
+    }
+    breakdown.push({
+      key: key,
+      role: ROLES[key],
+      weight: weight,
+      average: hasScore ? Number(average) : null,
+      counted: hasScore && weight > 0
+    });
+  });
+
+  const divisor = normalize ? usedWeight : totalWeight;
+  const net = divisor > 0 ? Math.round((weightedSum / divisor) * 100) / 100 : 0;
+
+  // เติมสัดส่วนที่ใช้จริงของแต่ละกลุ่ม เพื่อให้แสดงที่มาของคะแนนได้
+  breakdown.forEach(function (b) {
+    b.effectiveWeight = (divisor > 0 && b.counted)
+      ? Math.round((b.weight / divisor) * 1000) / 10
+      : 0;
+    b.contribution = b.counted && divisor > 0
+      ? Math.round((b.average * b.weight / divisor) * 100) / 100
+      : 0;
+  });
+
+  return {
+    net: net,
+    rating: ratingOf_(net),
+    totalWeight: totalWeight,
+    usedWeight: usedWeight,
+    normalized: normalize,
+    breakdown: breakdown,
+    enabled: true
+  };
+}
+
 // ==================== ปีการศึกษา / ภาคเรียน ====================
 
 function academicYears_() {

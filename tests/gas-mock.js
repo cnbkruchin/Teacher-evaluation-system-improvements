@@ -122,16 +122,26 @@ class Spreadsheet {
   setActiveSheet(s) { return s; }
 }
 
-const store = { properties: {}, mails: [], created: [], logs: [] };
+const store = { properties: {}, mails: [], created: [], logs: [], importTable: null, uploads: [] };
 const activeSs = new Spreadsheet('SS_TEST_ID', 'ระบบประเมินผลครู');
 activeSs.insertSheet('Sheet1');
+
+/* ทะเบียนสเปรดชีตทั้งหมด เพื่อให้ openById ทำงานเหมือนของจริง */
+const spreadsheets = new Map();
+spreadsheets.set(activeSs.getId(), activeSs);
 
 global.SpreadsheetApp = {
   getActiveSpreadsheet: () => activeSs,
   getActive: () => activeSs,
-  openById: () => activeSs,
+  openById: (id) => spreadsheets.get(id) || activeSs,
   flush: () => {},
-  create: (name) => { const ss = new Spreadsheet('TMP_' + Math.random().toString(36).slice(2), name); ss.insertSheet('Sheet1'); store.created.push(ss); return ss; },
+  create: (name) => {
+    const ss = new Spreadsheet('TMP_' + Math.random().toString(36).slice(2), name);
+    ss.insertSheet('Sheet1');
+    store.created.push(ss);
+    spreadsheets.set(ss.getId(), ss);
+    return ss;
+  },
   newDataValidation: () => {
     const builder = {
       requireValueInList() { return builder; },
@@ -166,15 +176,26 @@ global.Utilities = {
     return Array.from(hash).map(b => (b > 127 ? b - 256 : b));
   },
   base64Encode(bytes) {
-    const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.map(b => b & 0xFF));
+    const buf = Buffer.isBuffer(bytes) ? bytes
+      : (typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : Buffer.from(bytes.map(b => b & 0xFF)));
     return buf.toString('base64');
+  },
+  base64Decode(text) {
+    const buf = Buffer.from(String(text), 'base64');
+    return Array.from(buf).map(b => (b > 127 ? b - 256 : b));
   },
   getUuid: () => crypto.randomUUID(),
   newBlob(content, type, name) {
     const buf = Buffer.from(typeof content === 'string' ? content : Buffer.from(content));
     return {
       getBytes: () => Array.from(buf).map(b => (b > 127 ? b - 256 : b)),
-      getDataAsString: () => buf.toString('utf8'),
+      getDataAsString: (charset) => {
+        const cs = String(charset || 'UTF-8').toUpperCase();
+        if (cs === 'UTF-8' || cs === 'UTF8') return buf.toString('utf8');
+        // จำลองรหัสภาษาไทยแบบเดิม: ถ้าถอดไม่ได้จริงให้คืนอักขระเสีย
+        try { return new TextDecoder('windows-874').decode(buf); }
+        catch (e) { return buf.toString('latin1'); }
+      },
       setName: function () { return this; },
       getName: () => name || 'blob'
     };
@@ -217,14 +238,42 @@ global.DriveApp = {
       getName: () => blob.getName ? blob.getName() : 'file'
     })
   }),
-  getFileById: () => ({ setTrashed: () => {}, getAs: () => Utilities.newBlob('pdf') })
+  getFileById: (id) => ({
+    setTrashed: () => { spreadsheets.delete(id); },
+    getAs: () => Utilities.newBlob('pdf'),
+    getUrl: () => 'https://drive.google.com/file/d/' + id + '/view',
+    getId: () => id
+  })
 };
 
 global.UrlFetchApp = {
-  fetch: () => ({
-    getResponseCode: () => 200,
-    getBlob: () => Utilities.newBlob('FAKE_EXPORT_CONTENT_' + 'x'.repeat(500))
-  })
+  fetch: (url, options) => {
+    // จำลอง Drive API: อัปโหลดไฟล์ Excel แล้วแปลงเป็น Google Sheets
+    if (String(url).indexOf('upload/drive/v3/files') !== -1) {
+      const id = 'IMPORTED_' + Math.random().toString(36).slice(2);
+      const ss = new Spreadsheet(id, 'imported');
+      const sheet = ss.insertSheet('Sheet1');
+      const table = store.importTable || [];
+      if (table.length) {
+        const width = Math.max.apply(null, table.map(r => r.length));
+        sheet.getRange(1, 1, table.length, width).setValues(
+          table.map(r => { const row = r.slice(); while (row.length < width) row.push(''); return row; })
+        );
+      }
+      spreadsheets.set(id, ss);
+      store.uploads.push({ url: String(url), size: (options && options.payload || []).length });
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => JSON.stringify({ id: id, name: 'imported' }),
+        getBlob: () => Utilities.newBlob('{}')
+      };
+    }
+    return {
+      getResponseCode: () => 200,
+      getContentText: () => '{}',
+      getBlob: () => Utilities.newBlob('FAKE_EXPORT_CONTENT_' + 'x'.repeat(500))
+    };
+  }
 };
 
 global.ScriptApp = {
@@ -256,4 +305,4 @@ global.CacheService = {
 
 global.Logger = { log: () => {} };
 
-module.exports = { store, activeSs, Spreadsheet, Sheet, ops, resetOps, cacheStore };
+module.exports = { store, activeSs, Spreadsheet, Sheet, ops, resetOps, cacheStore, spreadsheets };

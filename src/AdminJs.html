@@ -42,6 +42,12 @@ App.pages.dashboard = async function (container) {
       '<button class="btn btn--ghost" onclick="App.go(\'export\')">📤 ไปหน้าส่งออกรายงาน</button>' +
     '</div>' +
 
+    (data.weights && data.weights.enabled
+      ? '<div class="alert alert--info"><span>⚖️</span><span>คะแนนที่แสดงเป็น <b>คะแนนสุทธิแบบถ่วงน้ำหนัก</b> — ' +
+        data.weights.rows.filter(function (r) { return r.weight > 0; })
+          .map(function (r) { return esc(r.role) + ' ' + r.weight + '%'; }).join(' · ') +
+        ' <button class="linkish" onclick="App.go(\'weights\')">ปรับน้ำหนัก</button></span></div>'
+      : '') +
     '<div class="grid grid-4" style="margin-bottom:18px">' +
       '<div class="stat"><div class="label">การประเมินทั้งหมด</div><div class="value">' + s.totalEvaluations + '</div>' +
         '<div class="hint">รายการ</div></div>' +
@@ -106,12 +112,18 @@ App.pages.dashboard = async function (container) {
 
 Admin.rankTable = function (rows) {
   if (!rows || !rows.length) return emptyState('📭', 'ยังไม่มีข้อมูล');
+  const weighted = rows[0] && rows[0].weighted;
   return '<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>ชื่อ-นามสกุล</th>' +
-    '<th>ระดับชั้น</th><th class="num">เฉลี่ย</th><th>ระดับ</th></tr></thead><tbody>' +
+    '<th>ระดับชั้น</th>' + (weighted ? '<th class="num">เฉลี่ย</th><th class="num">คะแนนสุทธิ</th>'
+      : '<th class="num">เฉลี่ย</th>') +
+    '<th>ระดับ</th></tr></thead><tbody>' +
     rows.map(function (t, i) {
+      const rating = t.finalRating || t.rating;
       return '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(t.name) + '</td>' +
-        '<td>' + esc(t.level || '-') + '</td><td class="num"><b>' + num(t.average) + '</b></td>' +
-        '<td><span class="badge ' + ratingClass(t.rating) + '">' + esc(t.rating) + '</span></td></tr>';
+        '<td>' + esc(t.level || '-') + '</td>' +
+        '<td class="num">' + num(t.average) + '</td>' +
+        (weighted ? '<td class="num"><b>' + num(t.netScore) + '</b></td>' : '') +
+        '<td><span class="badge ' + ratingClass(rating) + '">' + esc(rating) + '</span></td></tr>';
     }).join('') + '</tbody></table></div>';
 };
 

@@ -202,9 +202,14 @@ Exporter.renderAvailable = function () {
       '<input type="checkbox" ' + (selected[c.key] ? 'checked' : '') + ' onchange="Exporter.toggle(\'' + jsAttr(c.key) + '\',this.checked)">' +
       '<span class="grow"><span class="name">' + esc(c.name) + '</span>' +
         '<span class="meta">' + esc(c.level || 'ไม่ระบุระดับชั้น') + ' · เวร' + esc(c.dutyDay || '-') +
-        (c.evaluated ? ' · เฉลี่ย ' + num(c.average) + ' (' + esc(c.rating) + ')' : ' · ยังไม่ได้รับการประเมิน') +
+        (c.evaluated
+          ? ' · ' + (c.weighted ? 'สุทธิ ' + num(c.netScore) : 'เฉลี่ย ' + num(c.average)) +
+            ' (' + esc(c.finalRating || c.rating) + ')'
+          : ' · ยังไม่ได้รับการประเมิน') +
         (c.retired ? ' · ไม่อยู่ในทะเบียนครูแล้ว' : '') + '</span></span>' +
-      (c.evaluated ? '<span class="badge ' + ratingClass(c.rating) + '">' + num(c.average) + '</span>'
+      (c.evaluated
+        ? '<span class="badge ' + ratingClass(c.finalRating || c.rating) + '">' +
+          num(c.weighted ? c.netScore : c.average) + '</span>'
         : '<span class="badge badge--muted">—</span>') +
     '</label>';
   }).join('') : emptyState('🔍', 'ไม่พบรายชื่อตามเงื่อนไข');
@@ -220,7 +225,7 @@ Exporter.renderSelected = function () {
       '<span class="order-no">' + (i + 1) + '</span>' +
       '<span class="grow"><span class="name">' + esc(c.name) + '</span>' +
         '<span class="meta">' + esc(c.level || '-') + ' · เวร' + esc(c.dutyDay || '-') +
-        (c.evaluated ? ' · ' + num(c.average) : ' · ยังไม่ประเมิน') + '</span></span>' +
+        (c.evaluated ? ' · ' + num(c.weighted ? c.netScore : c.average) : ' · ยังไม่ประเมิน') + '</span></span>' +
       '<button class="icon-btn" title="เลื่อนขึ้น" onclick="Exporter.move(' + i + ',-1)">▲</button>' +
       '<button class="icon-btn" title="เลื่อนลง" onclick="Exporter.move(' + i + ',1)">▼</button>' +
       '<button class="icon-btn" title="นำออก" onclick="Exporter.toggle(\'' + jsAttr(c.key) + '\',false)">✕</button>' +
@@ -298,18 +303,26 @@ Exporter.preview = async function (button) {
   try {
     const data = await apiWithButton(button, 'apiPreviewExport', App.session.token, Exporter.payload());
     const s = data.stats;
+    const weighted = !!s.weighted;
+    const weightNote = (data.weights && data.weights.enabled)
+      ? '<p class="card__desc">⚖️ คะแนนสุทธิคิดจากน้ำหนัก: ' +
+        data.weights.rows.filter(function (r) { return r.weight > 0; })
+          .map(function (r) { return esc(r.role) + ' ' + r.weight + '%'; }).join(' · ') +
+        (data.weights.normalize ? ' (ปรับสัดส่วนอัตโนมัติเมื่อขาดกลุ่มผู้ประเมิน)' : '') + '</p>'
+      : '';
     $('previewArea').innerHTML =
       '<div class="card">' +
         '<div class="card__head"><h3>👁️ ตัวอย่างรายงาน</h3><div class="spacer"></div>' +
           '<span class="badge badge--brand">' + s.selected + ' คน</span>' +
           '<span class="badge badge--ok">ประเมินแล้ว ' + s.evaluated + '</span>' +
           (s.notEvaluated ? '<span class="badge badge--warn">ยังไม่ประเมิน ' + s.notEvaluated + '</span>' : '') +
-          '<span class="badge badge--muted">เฉลี่ยรวม ' + num(s.average) + '</span>' +
-        '</div>' +
+          '<span class="badge badge--muted">' + (weighted ? 'สุทธิเฉลี่ย ' : 'เฉลี่ยรวม ') + num(s.average) + '</span>' +
+        '</div>' + weightNote +
         '<div class="table-wrap scroll-y" style="max-height:460px"><table><thead><tr>' +
           '<th class="num">ลำดับ</th><th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>เวรประจำวัน</th><th>บทบาทในเวร</th>' +
           '<th class="num">รอง ผอ.</th><th class="num">หน.กิจการฯ</th><th class="num">หน.ระดับ</th><th class="num">หน.เวร</th>' +
-          '<th class="num">เฉลี่ย</th><th>ระดับ</th><th class="num">ครั้ง</th></tr></thead><tbody>' +
+          '<th class="num">เฉลี่ย</th>' + (weighted ? '<th class="num">คะแนนสุทธิ</th>' : '') +
+          '<th>ระดับ</th><th class="num">ครั้ง</th></tr></thead><tbody>' +
           data.rows.map(function (r, i) {
             const dash = function (v) { return v === null || v === undefined ? '-' : num(v); };
             return '<tr><td class="num">' + (i + 1) + '</td><td><b>' + esc(r.name) + '</b></td>' +
@@ -317,8 +330,11 @@ Exporter.preview = async function (button) {
               '<td class="small">' + esc(r.dutyPosition || '-') + '</td>' +
               '<td class="num">' + dash(r.viceDirector) + '</td><td class="num">' + dash(r.headAffairs) + '</td>' +
               '<td class="num">' + dash(r.headLevel) + '</td><td class="num">' + dash(r.headDuty) + '</td>' +
-              '<td class="num"><b>' + (r.count ? num(r.average) : '-') + '</b></td>' +
-              '<td>' + (r.count ? '<span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span>'
+              '<td class="num">' + (r.count ? num(r.average) : '-') + '</td>' +
+              (weighted ? '<td class="num"><b>' + (r.count ? num(r.netScore) : '-') + '</b></td>' : '') +
+              '<td>' + (r.count
+                ? '<span class="badge ' + ratingClass(r.finalRating || r.rating) + '">' +
+                  esc(r.finalRating || r.rating) + '</span>'
                 : '<span class="badge badge--muted">ยังไม่ประเมิน</span>') + '</td>' +
               '<td class="num">' + r.count + '</td></tr>';
           }).join('') + '</tbody></table></div>' +

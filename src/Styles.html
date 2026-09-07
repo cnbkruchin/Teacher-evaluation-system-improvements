@@ -397,6 +397,25 @@ html[data-theme="dark"] .r-improve { background:#450d0d; color:#fca5a5; }
 .page-loading { display:flex; align-items:center; gap:10px; color:var(--text-3); font-size:13px;
   padding:6px 2px 14px; }
 
+/* ============ น้ำหนักกลุ่มผู้ประเมิน ============ */
+.weight-row { display:flex; align-items:center; gap:14px; padding:11px 0;
+  border-bottom:1px dashed var(--border); flex-wrap:wrap; }
+.weight-row:last-child { border-bottom:none; }
+.weight-row__info { flex:1 1 210px; min-width:0; }
+.weight-row__name { font-size:13.5px; font-weight:600; }
+.weight-row__input { display:flex; align-items:center; gap:5px; flex-shrink:0; }
+.weight-row__input input { width:82px; text-align:center; }
+.weight-row__unit { font-size:13px; color:var(--text-3); font-weight:600; }
+.weight-range { flex:1 1 180px; min-width:140px; accent-color:var(--brand-600); height:26px; cursor:pointer; }
+.weight-bar { display:flex; height:26px; border-radius:8px; overflow:hidden; margin-top:14px;
+  background:var(--surface-3); }
+.weight-bar > div { display:grid; place-items:center; color:#fff; font-size:11.5px; font-weight:700;
+  transition:width .25s var(--ease); min-width:0; overflow:hidden; }
+.formula { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:14px; font-size:13.5px; line-height:2; }
+.formula .term { background:var(--brand-50); color:var(--brand-700); padding:3px 9px;
+  border-radius:7px; font-weight:600; white-space:nowrap; display:inline-block; }
+
 /* ============ อื่น ๆ ============ */
 .muted { color:var(--text-3); } .small { font-size:11.5px; } .strong { font-weight:700; }
 .mono { font-family:'SF Mono',Menlo,Consolas,monospace; }

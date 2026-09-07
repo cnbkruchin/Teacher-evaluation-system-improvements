@@ -98,6 +98,11 @@ function buildSummaryRows_(options) {
     return Math.round((arr.reduce(function (a, b) { return a + b; }, 0) / arr.length) * 100) / 100;
   };
 
+  // ตั้งค่าน้ำหนักกลุ่มผู้ประเมิน อ่านครั้งเดียวแล้วใช้กับทุกคน
+  const weighted = useRoleWeights_();
+  const weights = roleWeights_();
+  const normalize = normalizeRoleWeights_();
+
   const out = Object.keys(groups).map(function (key) {
     const g = groups[key];
     const average = avgOf(g.scores) || 0;
@@ -105,6 +110,16 @@ function buildSummaryRows_(options) {
     Object.keys(g.criteriaScores).forEach(function (cid) {
       criteriaAverages[cid] = avgOf(g.criteriaScores[cid]);
     });
+
+    // คะแนนสุทธิ: ถ่วงน้ำหนักตามกลุ่มผู้ประเมิน
+    const roleAverages = {
+      VICE_DIRECTOR: avgOf(g.byRole[ROLES.VICE_DIRECTOR]),
+      HEAD_AFFAIRS: avgOf(g.byRole[ROLES.HEAD_AFFAIRS]),
+      HEAD_LEVEL: avgOf(g.byRole[ROLES.HEAD_LEVEL]),
+      HEAD_DUTY: avgOf(g.byRole[ROLES.HEAD_DUTY])
+    };
+    const net = computeNetScore_(roleAverages, { weights: weights, normalize: normalize });
+
     return {
       key: key,
       teacherId: g.teacherId,
@@ -121,6 +136,15 @@ function buildSummaryRows_(options) {
       headDuty: avgOf(g.byRole[ROLES.HEAD_DUTY]),
       average: average,
       rating: ratingOf_(average),
+      netScore: net.net,
+      netRating: net.rating,
+      netBreakdown: net.breakdown,
+      usedWeight: net.usedWeight,
+      totalWeight: net.totalWeight,
+      weighted: weighted,
+      // คะแนนที่ใช้เป็นทางการ: ถ้าเปิดถ่วงน้ำหนักจะใช้คะแนนสุทธิ ถ้าไม่เปิดใช้ค่าเฉลี่ยรวม
+      final: weighted ? net.net : average,
+      finalRating: weighted ? net.rating : ratingOf_(average),
       count: g.count,
       comments: g.comments,
       criteriaAverages: criteriaAverages,
@@ -130,6 +154,21 @@ function buildSummaryRows_(options) {
 
   out.sort(function (a, b) { return a.name.localeCompare(b.name, 'th'); });
   return out;
+}
+
+/** สรุปการตั้งค่าน้ำหนักกลุ่มผู้ประเมิน สำหรับแสดงบนหน้าจอและใส่ในรายงาน */
+function scoreWeightInfo_() {
+  const weights = roleWeights_();
+  const enabled = useRoleWeights_();
+  const rows = Object.keys(ROLES).map(function (key) {
+    return { key: key, role: ROLES[key], weight: Number(weights[key]) || 0 };
+  });
+  return {
+    enabled: enabled,
+    normalize: normalizeRoleWeights_(),
+    total: rows.reduce(function (a, b) { return a + b.weight; }, 0),
+    rows: rows
+  };
 }
 
 /** รายชื่อผู้ถูกประเมินทั้งหมดของภาคเรียน พร้อมสถานะ เพื่อให้ผู้ดูแลเลือกก่อนส่งออก */
@@ -161,7 +200,9 @@ function apiExportCandidates(token, year, semester) {
         dutyLocation: t.dutyLocation,
         dutyTime: t.dutyTime,
         viceDirector: null, headAffairs: null, headLevel: null, headDuty: null,
-        average: 0, rating: '', count: 0, comments: [], criteriaAverages: {}, evaluations: [],
+        average: 0, rating: '', netScore: 0, netRating: '', netBreakdown: [],
+        weighted: useRoleWeights_(), final: 0, finalRating: '',
+        count: 0, comments: [], criteriaAverages: {}, evaluations: [],
         evaluated: false
       };
     });
@@ -178,6 +219,7 @@ function apiExportCandidates(token, year, semester) {
       years: academicYears_(), semesters: semesterList_(),
       levels: LEVELS, days: DAYS,
       criteria: loadCriteria_(),
+      weights: scoreWeightInfo_(),
       candidates: candidates
     });
   });
@@ -194,10 +236,14 @@ function apiPreviewExport(token, payload) {
       evaluated: rows.filter(function (r) { return r.count > 0; }).length,
       notEvaluated: rows.filter(function (r) { return r.count === 0; }).length,
       average: rows.length
-        ? Math.round((rows.reduce(function (a, b) { return a + b.average; }, 0) / rows.length) * 100) / 100
-        : 0
+        ? Math.round((rows.reduce(function (a, b) { return a + (b.final || 0); }, 0) / rows.length) * 100) / 100
+        : 0,
+      weighted: useRoleWeights_()
     };
-    return ok_({ rows: rows, stats: stats, criteria: loadCriteria_() });
+    return ok_({
+      rows: rows, stats: stats, criteria: loadCriteria_(),
+      weights: scoreWeightInfo_()
+    });
   });
 }
 
@@ -229,7 +275,9 @@ function orderedReportRows_(payload) {
         dutyDay: duty.day || t.defaultDay || '', dutyPosition: duty.position || '',
         dutyLocation: duty.location || '', dutyTime: '',
         viceDirector: null, headAffairs: null, headLevel: null, headDuty: null,
-        average: 0, rating: '', count: 0, comments: [], criteriaAverages: {}, evaluations: []
+        average: 0, rating: '', netScore: 0, netRating: '', netBreakdown: [],
+        weighted: useRoleWeights_(), final: 0, finalRating: '',
+        count: 0, comments: [], criteriaAverages: {}, evaluations: []
       };
     }).filter(Boolean);
   } else {
@@ -238,8 +286,8 @@ function orderedReportRows_(payload) {
 
   const sortBy = str_(p.sortBy) || 'custom';
   if (sortBy === 'name') rows.sort(function (a, b) { return a.name.localeCompare(b.name, 'th'); });
-  else if (sortBy === 'scoreDesc') rows.sort(function (a, b) { return b.average - a.average; });
-  else if (sortBy === 'scoreAsc') rows.sort(function (a, b) { return a.average - b.average; });
+  else if (sortBy === 'scoreDesc') rows.sort(function (a, b) { return (b.final || 0) - (a.final || 0); });
+  else if (sortBy === 'scoreAsc') rows.sort(function (a, b) { return (a.final || 0) - (b.final || 0); });
   else if (sortBy === 'level') {
     rows.sort(function (a, b) {
       const d = LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level);
@@ -279,7 +327,8 @@ function apiGenerateSummary(token, payload) {
           r.headLevel === null ? '-' : r.headLevel,
           r.headDuty === null ? '-' : r.headDuty,
           r.count ? r.average : '-',
-          r.count ? r.rating : 'ยังไม่ได้รับการประเมิน',
+          r.count ? (r.weighted ? r.netScore : '-') : '-',
+          r.count ? r.finalRating : 'ยังไม่ได้รับการประเมิน',
           r.count
         ];
       });
@@ -288,7 +337,7 @@ function apiGenerateSummary(token, payload) {
       // ระบายสีระดับผลการประเมินให้อ่านง่าย
       const ratingCol = SUMMARY_HEADERS.indexOf('ระดับผลการประเมิน') + 1;
       rows.forEach(function (r, i) {
-        sheet.getRange(i + 2, ratingCol).setBackground(ratingColor_(r.count ? r.rating : ''));
+        sheet.getRange(i + 2, ratingCol).setBackground(ratingColor_(r.count ? r.finalRating : ''));
       });
       sheet.autoResizeColumns(1, SUMMARY_HEADERS.length);
 
@@ -419,9 +468,41 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
   const sheet = temp.getSheets()[0];
   sheet.setName('สรุปผลการประเมิน');
 
-  const headers = ['ลำดับ', 'ชื่อ-นามสกุล', 'ระดับชั้น', 'เวรประจำวัน', 'บทบาทในเวร',
-    'รอง ผอ.', 'หน.กิจการฯ', 'หน.ระดับชั้น', 'หน.เวรฯ',
-    'คะแนนเฉลี่ย', 'ระดับผลการประเมิน', 'จำนวนครั้งที่ประเมิน'];
+  // ---- กำหนดคอลัมน์ของตารางสรุป (เพิ่มคอลัมน์คะแนนสุทธิเมื่อเปิดใช้การถ่วงน้ำหนัก) ----
+  const weightInfo = scoreWeightInfo_();
+  const useNet = weightInfo.enabled;
+  const dash = function (v) { return (v === null || v === undefined) ? '-' : v; };
+  const weightTag = function (key) {
+    if (!useNet) return '';
+    const found = weightInfo.rows.filter(function (r) { return r.key === key; })[0];
+    return found ? '\n(' + found.weight + '%)' : '';
+  };
+
+  const columns = [
+    { title: 'ลำดับ', width: 45, align: 'center', get: function (r, i) { return i + 1; } },
+    { title: 'ชื่อ-นามสกุล', width: 205, get: function (r) { return r.name; } },
+    { title: 'ระดับชั้น', width: 72, align: 'center', get: function (r) { return r.level || '-'; } },
+    { title: 'เวรประจำวัน', width: 92, align: 'center', get: function (r) { return r.dutyDay || '-'; } },
+    { title: 'บทบาทในเวร', width: 92, align: 'center', get: function (r) { return r.dutyPosition || '-'; } },
+    { title: 'รอง ผอ.' + weightTag('VICE_DIRECTOR'), width: 78, num: true,
+      get: function (r) { return dash(r.viceDirector); } },
+    { title: 'หน.กิจการฯ' + weightTag('HEAD_AFFAIRS'), width: 84, num: true,
+      get: function (r) { return dash(r.headAffairs); } },
+    { title: 'หน.ระดับชั้น' + weightTag('HEAD_LEVEL'), width: 84, num: true,
+      get: function (r) { return dash(r.headLevel); } },
+    { title: 'หน.เวรฯ' + weightTag('HEAD_DUTY'), width: 76, num: true,
+      get: function (r) { return dash(r.headDuty); } },
+    { title: 'คะแนนเฉลี่ย', width: 84, num: true,
+      get: function (r) { return r.count ? r.average : '-'; } },
+    useNet ? { title: 'คะแนนสุทธิ', width: 90, num: true, bold: true,
+      get: function (r) { return r.count ? r.netScore : '-'; } } : null,
+    { title: 'ระดับผลการประเมิน', width: 118, align: 'center', rating: true,
+      get: function (r) { return r.count ? r.finalRating : 'ยังไม่ได้รับการประเมิน'; } },
+    { title: 'จำนวนครั้งที่ประเมิน', width: 82, align: 'center',
+      get: function (r) { return r.count; } }
+  ].filter(Boolean);
+
+  const headers = columns.map(function (c) { return c.title; });
 
   // ---- ส่วนหัวรายงาน ----
   const headerLines = [
@@ -430,6 +511,12 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
     [termLabel_(year, semester) + '   |   กลุ่มบริหารงานกิจการนักเรียน'],
     ['จำนวนผู้ถูกประเมิน ' + rows.length + ' คน   |   ออกรายงานเมื่อ ' + formatDate_(new Date(), 'd MMMM yyyy HH:mm') + ' น.']
   ];
+  if (useNet) {
+    headerLines.push(['คะแนนสุทธิคิดจากน้ำหนักผู้ประเมิน: ' +
+      weightInfo.rows.filter(function (r) { return r.weight > 0; })
+        .map(function (r) { return r.role + ' ' + r.weight + '%'; }).join('  ·  ') +
+      (weightInfo.normalize ? '   (ปรับสัดส่วนอัตโนมัติเมื่อขาดกลุ่มผู้ประเมิน)' : '')]);
+  }
   if (str_(o.note)) headerLines.push([str_(o.note)]);
 
   headerLines.forEach(function (line, i) {
@@ -437,38 +524,38 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
       .setHorizontalAlignment('center')
       .setFontWeight(i <= 1 ? 'bold' : 'normal')
       .setFontSize(i === 0 ? 16 : (i === 1 ? 14 : 10))
-      .setFontColor(i <= 1 ? '#1a237e' : '#555555');
+      .setFontColor(i <= 1 ? '#1a237e' : '#555555')
+      .setWrap(true);
   });
 
   const headerRow = headerLines.length + 2;
   sheet.getRange(headerRow, 1, 1, headers.length).setValues([headers])
     .setBackground('#1a237e').setFontColor('#ffffff').setFontWeight('bold')
-    .setHorizontalAlignment('center').setWrap(true);
+    .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+  sheet.setRowHeight(headerRow, useNet ? 46 : 34);
 
-  const dash = function (v) { return (v === null || v === undefined) ? '-' : v; };
   const values = rows.map(function (r, i) {
-    return [
-      i + 1, r.name, r.level || '-', r.dutyDay || '-', r.dutyPosition || '-',
-      dash(r.viceDirector), dash(r.headAffairs), dash(r.headLevel), dash(r.headDuty),
-      r.count ? r.average : '-', r.count ? r.rating : 'ยังไม่ได้รับการประเมิน', r.count
-    ];
+    return columns.map(function (c) { return c.get(r, i); });
   });
-  sheet.getRange(headerRow + 1, 1, values.length, headers.length).setValues(values);
+  if (values.length) sheet.getRange(headerRow + 1, 1, values.length, headers.length).setValues(values);
 
-  // จัดรูปแบบตาราง
+  // จัดรูปแบบตามชนิดของแต่ละคอลัมน์
   const dataRange = sheet.getRange(headerRow, 1, values.length + 1, headers.length);
   dataRange.setBorder(true, true, true, true, true, true, '#b0bec5', SpreadsheetApp.BorderStyle.SOLID);
-  sheet.getRange(headerRow + 1, 6, values.length, 5).setNumberFormat('0.00').setHorizontalAlignment('center');
-  sheet.getRange(headerRow + 1, 1, values.length, 1).setHorizontalAlignment('center');
-  sheet.getRange(headerRow + 1, 3, values.length, 3).setHorizontalAlignment('center');
-  sheet.getRange(headerRow + 1, 12, values.length, 1).setHorizontalAlignment('center');
 
-  rows.forEach(function (r, i) {
-    sheet.getRange(headerRow + 1 + i, 11).setBackground(ratingColor_(r.count ? r.rating : ''));
-  });
-
-  [40, 200, 70, 90, 90, 70, 80, 80, 70, 80, 110, 80].forEach(function (w, i) {
-    sheet.setColumnWidth(i + 1, w);
+  columns.forEach(function (c, index) {
+    sheet.setColumnWidth(index + 1, c.width);
+    if (!values.length) return;
+    const range = sheet.getRange(headerRow + 1, index + 1, values.length, 1);
+    if (c.num) range.setNumberFormat('0.00').setHorizontalAlignment('center');
+    else if (c.align) range.setHorizontalAlignment(c.align);
+    if (c.bold) range.setFontWeight('bold');
+    if (c.rating) {
+      rows.forEach(function (r, i) {
+        sheet.getRange(headerRow + 1 + i, index + 1)
+          .setBackground(ratingColor_(r.count ? r.finalRating : ''));
+      });
+    }
   });
   sheet.setFrozenRows(headerRow);
 
@@ -515,6 +602,52 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
     detailSheet.setColumnWidth(1, 60);
     detailSheet.setColumnWidth(2, 200);
     detailSheet.setFrozenRows(2);
+  }
+
+  // ---- แผ่นงาน: วิธีคิดคะแนนสุทธิ (แสดงเมื่อเปิดใช้การถ่วงน้ำหนัก) ----
+  if (useNet) {
+    const ws = temp.insertSheet('วิธีคิดคะแนนสุทธิ');
+    ws.getRange(1, 1, 1, 4).merge().setValue('วิธีคิดคะแนนสุทธิของครูแต่ละคน')
+      .setFontWeight('bold').setFontSize(14).setFontColor('#1a237e');
+    ws.getRange(2, 1, 1, 4).merge()
+      .setValue('คะแนนสุทธิ = ผลรวมของ (คะแนนเฉลี่ยของกลุ่มผู้ประเมิน × น้ำหนักของกลุ่ม) ÷ ผลรวมน้ำหนักที่ใช้จริง')
+      .setWrap(true);
+    ws.getRange(3, 1, 1, 4).merge()
+      .setValue(weightInfo.normalize
+        ? 'หมายเหตุ: ระบบปรับสัดส่วนอัตโนมัติ — หากครูไม่ได้รับการประเมินจากกลุ่มใด จะหารด้วยผลรวมน้ำหนักเฉพาะกลุ่มที่ประเมินจริง'
+        : 'หมายเหตุ: หารด้วยผลรวมน้ำหนักทั้งหมด กลุ่มที่ไม่มีคะแนนถือเป็น 0 คะแนน')
+      .setWrap(true).setFontColor('#555555');
+
+    ws.getRange(5, 1, 1, 2).setValues([['กลุ่มผู้ประเมิน', 'น้ำหนัก (%)']])
+      .setBackground('#1a237e').setFontColor('#ffffff').setFontWeight('bold');
+    const weightRows = weightInfo.rows.map(function (r) { return [r.role, r.weight]; });
+    ws.getRange(6, 1, weightRows.length, 2).setValues(weightRows);
+    ws.getRange(6 + weightRows.length, 1, 1, 2).setValues([['รวม', weightInfo.total]])
+      .setFontWeight('bold').setBackground('#eceff1');
+    ws.setColumnWidth(1, 320);
+    ws.setColumnWidth(2, 110);
+
+    // ตัวอย่างการคำนวณของคนแรกที่มีคะแนน เพื่อให้ตรวจสอบที่มาได้
+    const sample = rows.filter(function (r) { return r.count > 0 && r.netBreakdown && r.netBreakdown.length; })[0];
+    if (sample) {
+      const startRow = 8 + weightRows.length;
+      ws.getRange(startRow, 1, 1, 4).merge()
+        .setValue('ตัวอย่างการคำนวณ: ' + sample.name).setFontWeight('bold').setFontSize(12);
+      ws.getRange(startRow + 1, 1, 1, 4)
+        .setValues([['กลุ่มผู้ประเมิน', 'คะแนนเฉลี่ยของกลุ่ม', 'น้ำหนักที่ใช้จริง (%)', 'ส่งผลต่อคะแนนสุทธิ']])
+        .setBackground('#eceff1').setFontWeight('bold');
+      const sampleRows = sample.netBreakdown.map(function (b) {
+        return [b.role, b.average === null ? 'ไม่มีการประเมิน' : b.average,
+          b.counted ? b.effectiveWeight : 0, b.contribution];
+      });
+      ws.getRange(startRow + 2, 1, sampleRows.length, 4).setValues(sampleRows);
+      ws.getRange(startRow + 2 + sampleRows.length, 1, 1, 4)
+        .setValues([['คะแนนสุทธิ', '', '', sample.netScore]])
+        .setFontWeight('bold').setBackground('#e8eaf6');
+      ws.getRange(startRow + 2, 2, sampleRows.length + 1, 3).setNumberFormat('0.00');
+      ws.setColumnWidth(3, 160);
+      ws.setColumnWidth(4, 160);
+    }
   }
 
   // ---- แผ่นงาน: ข้อเสนอแนะ ----

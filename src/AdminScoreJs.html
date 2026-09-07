@@ -1,0 +1,240 @@
+<script>
+/* ============================================================
+   AdminScoreJs — น้ำหนักของกลุ่มผู้ประเมิน และการคิดคะแนนสุทธิ
+   ============================================================ */
+
+const Weights = { data: null, values: {} };
+
+App.pages.weights = async function (container) {
+  const data = await api('apiGetScoreWeights', App.session.token, '', '');
+  Weights.data = data;
+  Weights.values = {};
+  data.rows.forEach(function (r) { Weights.values[r.key] = r.weight; });
+
+  container.innerHTML =
+    '<div class="alert ' + (data.enabled ? 'alert--ok' : 'alert--info') + '"><span>' +
+      (data.enabled ? '⚖️' : 'ℹ️') + '</span><span>' +
+      (data.enabled
+        ? '<b>กำลังคิดคะแนนสุทธิแบบถ่วงน้ำหนัก</b> — คะแนนของครูแต่ละคนมาจากคะแนนเฉลี่ยของผู้ประเมินแต่ละกลุ่ม ' +
+          'คูณด้วยน้ำหนักของกลุ่มนั้น'
+        : '<b>ยังไม่ได้เปิดใช้การถ่วงน้ำหนัก</b> — ขณะนี้ระบบใช้คะแนนเฉลี่ยรวมของทุกการประเมินเท่า ๆ กัน ' +
+          'เปิดใช้งานด้านล่างเพื่อกำหนดความสำคัญของผู้ประเมินแต่ละกลุ่ม') +
+    '</span></div>' +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>⚖️ น้ำหนักของกลุ่มผู้ประเมิน</h3>' +
+        '<div class="spacer"></div>' +
+        '<span class="badge" id="wTotalBadge"></span></div>' +
+      '<p class="card__desc">กำหนดว่าคะแนนจากผู้ประเมินแต่ละกลุ่มจะคิดเป็นกี่ % ของคะแนนรวม ' +
+        'ระบบจะนำไปประมวลผลเป็น "คะแนนสุทธิ" ของครูแต่ละคน</p>' +
+
+      '<div class="switch-row"><div><div class="t">เปิดใช้การคิดคะแนนสุทธิแบบถ่วงน้ำหนัก</div>' +
+        '<div class="d">ถ้าปิด ระบบจะใช้คะแนนเฉลี่ยรวมของทุกการประเมินเท่ากันหมด</div></div>' +
+        '<input type="checkbox" id="wEnabled" ' + (data.enabled ? 'checked' : '') + '></div>' +
+
+      '<div id="wRows" style="margin-top:14px">' +
+        data.rows.map(function (r) {
+          return '<div class="weight-row" data-key="' + esc(r.key) + '">' +
+            '<div class="weight-row__info">' +
+              '<div class="weight-row__name">' + esc(r.role) + '</div>' +
+              '<div class="small muted">ประเมินครูแล้ว ' + r.evaluatedTeachers + ' คน ในภาคเรียนนี้</div>' +
+            '</div>' +
+            '<input type="range" class="weight-range" min="0" max="100" step="5" value="' + r.weight + '" ' +
+              'data-key="' + esc(r.key) + '">' +
+            '<div class="weight-row__input">' +
+              '<input type="number" class="weight-number" min="0" max="100" step="0.5" value="' + r.weight + '" ' +
+                'data-key="' + esc(r.key) + '"><span class="weight-row__unit">%</span>' +
+            '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+
+      '<div class="weight-bar" id="wBar"></div>' +
+      '<div class="hint" id="wHint"></div>' +
+
+      '<div class="switch-row" style="margin-top:10px"><div>' +
+        '<div class="t">ปรับสัดส่วนอัตโนมัติเมื่อขาดกลุ่มผู้ประเมิน</div>' +
+        '<div class="d">ถ้าครูคนหนึ่งไม่ได้รับการประเมินจากบางกลุ่ม ระบบจะเฉลี่ยเฉพาะกลุ่มที่ประเมินจริง ' +
+          '(แนะนำให้เปิด เพื่อไม่ให้ครูเสียเปรียบ)</div></div>' +
+        '<input type="checkbox" id="wNormalize" ' + (data.normalize ? 'checked' : '') + '></div>' +
+
+      '<div class="btn-row" style="margin-top:14px">' +
+        '<button class="btn" id="btnSaveWeights">💾 บันทึกน้ำหนัก</button>' +
+        '<button class="btn btn--soft" id="btnPreviewWeights">🔍 ดูผลกระทบก่อนบันทึก</button>' +
+        '<button class="btn btn--ghost" id="btnResetWeights">↩️ คืนค่าเริ่มต้น</button>' +
+        '<button class="btn btn--ghost" id="btnEqualWeights">⚖️ เท่ากันทุกกลุ่ม</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>🧮 วิธีคิดคะแนนสุทธิ</h3></div>' +
+      '<div class="formula" id="wFormula"></div>' +
+      '<p class="small muted" style="margin-top:10px">ตัวอย่าง: ถ้ากำหนด รอง ผอ. 40% · หน.กิจการฯ 30% · หน.ระดับชั้น 20% · หน.เวรฯ 10% ' +
+        'และครูได้คะแนนเฉลี่ยจากแต่ละกลุ่มเป็น 5.00, 4.00, 4.50, 3.00 ตามลำดับ<br>' +
+        'คะแนนสุทธิ = (5.00×40 + 4.00×30 + 4.50×20 + 3.00×10) ÷ 100 = <b>4.40</b></p>' +
+    '</div>' +
+
+    '<div id="wPreviewArea"></div>';
+
+  Weights.bind();
+  Weights.updateTotal();
+};
+
+Weights.bind = function () {
+  document.querySelectorAll('.weight-range').forEach(function (el) {
+    el.oninput = function () {
+      Weights.set(this.dataset.key, Number(this.value));
+      const number = document.querySelector('.weight-number[data-key="' + this.dataset.key + '"]');
+      if (number) number.value = this.value;
+    };
+  });
+  document.querySelectorAll('.weight-number').forEach(function (el) {
+    el.oninput = function () {
+      let v = Number(this.value);
+      if (isNaN(v)) return;
+      v = Math.min(100, Math.max(0, v));
+      Weights.set(this.dataset.key, v);
+      const range = document.querySelector('.weight-range[data-key="' + this.dataset.key + '"]');
+      if (range) range.value = v;
+    };
+  });
+
+  $('btnSaveWeights').onclick = function () { Weights.save(this); };
+  $('btnPreviewWeights').onclick = function () { Weights.preview(this); };
+  $('btnResetWeights').onclick = function () { Weights.apply(Weights.data.defaults); };
+  $('btnEqualWeights').onclick = function () {
+    const each = Math.round(100 / Weights.data.rows.length * 10) / 10;
+    const values = {};
+    Weights.data.rows.forEach(function (r) { values[r.key] = each; });
+    Weights.apply(values);
+  };
+};
+
+Weights.set = function (key, value) {
+  Weights.values[key] = value;
+  Weights.updateTotal();
+};
+
+Weights.apply = function (values) {
+  Object.keys(values).forEach(function (key) {
+    Weights.values[key] = Number(values[key]) || 0;
+    const range = document.querySelector('.weight-range[data-key="' + key + '"]');
+    const number = document.querySelector('.weight-number[data-key="' + key + '"]');
+    if (range) range.value = Weights.values[key];
+    if (number) number.value = Weights.values[key];
+  });
+  Weights.updateTotal();
+};
+
+Weights.total = function () {
+  return Object.keys(Weights.values).reduce(function (a, k) { return a + (Number(Weights.values[k]) || 0); }, 0);
+};
+
+Weights.updateTotal = function () {
+  const total = Math.round(Weights.total() * 10) / 10;
+  const badge = $('wTotalBadge');
+  if (badge) {
+    badge.textContent = 'รวม ' + total + '%';
+    badge.className = 'badge ' + (total === 100 ? 'badge--ok' : 'badge--warn');
+  }
+
+  const bar = $('wBar');
+  if (bar) {
+    const colors = ['var(--brand-600)', 'var(--teal)', 'var(--warn)', 'var(--info)'];
+    bar.innerHTML = Weights.data.rows.map(function (r, i) {
+      const v = Number(Weights.values[r.key]) || 0;
+      if (!v) return '';
+      const percent = total > 0 ? (v / total * 100) : 0;
+      return '<div style="width:' + percent + '%;background:' + colors[i % colors.length] + '" ' +
+        'title="' + esc(r.role) + ' ' + v + '%">' + (percent > 12 ? v + '%' : '') + '</div>';
+    }).join('');
+  }
+
+  const hint = $('wHint');
+  if (hint) {
+    hint.innerHTML = total === 100
+      ? '✅ น้ำหนักรวมเท่ากับ 100% พอดี'
+      : '⚠️ น้ำหนักรวม ' + total + '% — ระบบจะเทียบสัดส่วนให้อัตโนมัติ ' +
+        'แต่แนะนำให้ปรับให้รวมเป็น 100% เพื่อให้อ่านรายงานเข้าใจง่าย';
+  }
+
+  const formula = $('wFormula');
+  if (formula) {
+    const parts = Weights.data.rows.filter(function (r) { return (Number(Weights.values[r.key]) || 0) > 0; });
+    formula.innerHTML = parts.length
+      ? 'คะแนนสุทธิ = ( ' + parts.map(function (r) {
+          return '<span class="term">คะแนน' + esc(r.role.replace('รองผู้อำนวยการฝ่ายกิจการนักเรียน', 'รอง ผอ.')
+            .replace('หัวหน้ากลุ่มบริหารงานกิจการนักเรียน', 'หน.กิจการฯ')
+            .replace('หัวหน้าระดับชั้น', 'หน.ระดับชั้น')
+            .replace('หัวหน้าเวรประจำวัน', 'หน.เวรฯ')) +
+            ' × ' + Weights.values[r.key] + '</span>';
+        }).join(' + ') + ' ) ÷ ' + Math.round(Weights.total() * 10) / 10
+      : '<span class="muted">ยังไม่ได้กำหนดน้ำหนัก</span>';
+  }
+};
+
+Weights.payload = function () {
+  return {
+    enabled: $('wEnabled').checked,
+    normalize: $('wNormalize').checked,
+    weights: Weights.values,
+    year: Weights.data.year,
+    semester: Weights.data.semester
+  };
+};
+
+Weights.save = async function (button) {
+  try {
+    const res = await apiWithButton(button, 'apiSaveScoreWeights', App.session.token, Weights.payload());
+    toast(res && res.enabled ? 'บันทึกและเปิดใช้การถ่วงน้ำหนักแล้ว' : 'บันทึกเรียบร้อย', 'ok', 6000);
+    App.go('weights');
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+
+Weights.preview = async function (button) {
+  try {
+    const p = await apiWithButton(button, 'apiPreviewScoreWeights', App.session.token, Weights.payload());
+    if (!p.rows.length) {
+      $('wPreviewArea').innerHTML = '<div class="card">' + emptyState('📭',
+        'ยังไม่มีผลการประเมินในภาคเรียนนี้', 'ลองเลือกภาคเรียนอื่น หรือรอให้ผู้ประเมินบันทึกผลก่อน') + '</div>';
+      return;
+    }
+
+    $('wPreviewArea').innerHTML =
+      '<div class="card">' +
+        '<div class="card__head"><h3>🔍 ผลกระทบต่อคะแนน (ยังไม่บันทึก)</h3>' +
+          '<div class="spacer"></div>' +
+          '<span class="badge badge--muted">เฉลี่ยเดิม ' + num(p.averageOfPlain) + '</span>' +
+          '<span class="badge badge--brand">คะแนนสุทธิเฉลี่ย ' + num(p.averageOfNet) + '</span>' +
+        '</div>' +
+        '<p class="card__desc">เทียบคะแนนและอันดับก่อน-หลังใช้การถ่วงน้ำหนัก จากข้อมูล ' +
+          esc(semesterLabel(p.semester) + '/' + p.year) + '</p>' +
+        '<div class="table-wrap scroll-y" style="max-height:440px"><table><thead><tr>' +
+          '<th class="num">อันดับ</th><th>ชื่อ-นามสกุล</th><th class="num">เฉลี่ยเดิม</th>' +
+          '<th class="num">คะแนนสุทธิ</th><th class="num">ต่าง</th><th>ระดับใหม่</th><th class="num">อันดับเปลี่ยน</th>' +
+        '</tr></thead><tbody>' +
+          p.rows.map(function (r) {
+            const diffColor = r.diff > 0 ? 'var(--ok)' : (r.diff < 0 ? 'var(--danger)' : 'var(--text-3)');
+            const move = r.rankChange > 0 ? '▲ ' + r.rankChange
+              : (r.rankChange < 0 ? '▼ ' + Math.abs(r.rankChange) : '—');
+            const moveColor = r.rankChange > 0 ? 'var(--ok)' : (r.rankChange < 0 ? 'var(--danger)' : 'var(--text-3)');
+            return '<tr><td class="num">' + r.rank + '</td>' +
+              '<td><b>' + esc(r.name) + '</b><div class="small muted">' + esc(r.level || '-') + '</div></td>' +
+              '<td class="num">' + num(r.average) + '</td>' +
+              '<td class="num"><b>' + num(r.netScore) + '</b></td>' +
+              '<td class="num" style="color:' + diffColor + '">' + (r.diff > 0 ? '+' : '') + num(r.diff) + '</td>' +
+              '<td><span class="badge ' + ratingClass(r.netRating) + '">' + esc(r.netRating) + '</span></td>' +
+              '<td class="num" style="color:' + moveColor + '">' + move + '</td></tr>';
+          }).join('') +
+        '</tbody></table></div>' +
+        '<div class="btn-row" style="margin-top:12px">' +
+          '<button class="btn btn--ok" onclick="Weights.save(this)">💾 บันทึกน้ำหนักชุดนี้</button>' +
+        '</div>' +
+      '</div>';
+    $('wPreviewArea').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    toast(err.message, 'danger');
+  }
+};
+</script>

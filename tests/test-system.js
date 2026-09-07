@@ -445,7 +445,210 @@ check('ไม่พบข้อมูลตามเงื่อนไข → �
 check('บันทึกการเคลียร์ลงประวัติการใช้งาน',
   readLogs_(50).some(l => l.action.indexOf('เคลียร์ข้อมูล') !== -1));
 
-/* ---------- 16. ตรวจสุขภาพระบบ ---------- */
+/* ---------- 16. น้ำหนักกลุ่มผู้ประเมินและคะแนนสุทธิ ---------- */
+section('คะแนนสุทธิแบบถ่วงน้ำหนักตามกลุ่มผู้ประเมิน');
+
+// คำนวณตรง ๆ จากสูตร
+const netFull = computeNetScore_(
+  { VICE_DIRECTOR: 5, HEAD_AFFAIRS: 4, HEAD_LEVEL: 4.5, HEAD_DUTY: 3 },
+  { weights: { VICE_DIRECTOR: 40, HEAD_AFFAIRS: 30, HEAD_LEVEL: 20, HEAD_DUTY: 10 }, normalize: true });
+check('คำนวณคะแนนสุทธิถูกต้อง (5×40 + 4×30 + 4.5×20 + 3×10) ÷ 100 = 4.40',
+  Math.abs(netFull.net - 4.4) < 0.001, netFull.net);
+check('ระดับผลอิงคะแนนสุทธิ', netFull.rating === 'ดีมาก', netFull.rating);
+check('แสดงสัดส่วนที่ใช้จริงของแต่ละกลุ่ม',
+  netFull.breakdown.filter(b => b.key === 'VICE_DIRECTOR')[0].effectiveWeight === 40,
+  netFull.breakdown.map(b => b.effectiveWeight));
+
+// ขาดกลุ่มผู้ประเมิน: ปรับสัดส่วนอัตโนมัติ
+const netPartial = computeNetScore_(
+  { VICE_DIRECTOR: 5, HEAD_AFFAIRS: 4, HEAD_LEVEL: null, HEAD_DUTY: null },
+  { weights: { VICE_DIRECTOR: 40, HEAD_AFFAIRS: 30, HEAD_LEVEL: 20, HEAD_DUTY: 10 }, normalize: true });
+check('ขาดบางกลุ่ม + ปรับสัดส่วนอัตโนมัติ → (5×40 + 4×30) ÷ 70 = 4.57',
+  Math.abs(netPartial.net - 4.57) < 0.01, netPartial.net);
+check('ผลรวมน้ำหนักที่ใช้จริงเท่ากับ 70', netPartial.usedWeight === 70, netPartial.usedWeight);
+
+const netNoNorm = computeNetScore_(
+  { VICE_DIRECTOR: 5, HEAD_AFFAIRS: 4, HEAD_LEVEL: null, HEAD_DUTY: null },
+  { weights: { VICE_DIRECTOR: 40, HEAD_AFFAIRS: 30, HEAD_LEVEL: 20, HEAD_DUTY: 10 }, normalize: false });
+check('ปิดปรับสัดส่วน → หารด้วย 100 ได้ 3.20', Math.abs(netNoNorm.net - 3.2) < 0.001, netNoNorm.net);
+
+// ผ่าน API
+const w0 = apiGetScoreWeights(T2, YEAR, '1');
+check('เปิดหน้าน้ำหนักผู้ประเมินได้', w0.success === true, w0.message);
+check('ค่าเริ่มต้นยังไม่เปิดใช้การถ่วงน้ำหนัก', w0.data.enabled === false);
+check('น้ำหนักเริ่มต้นรวม 100%', w0.data.total === 100, w0.data.total);
+
+check('น้ำหนักเกิน 100 ต่อกลุ่ม → ปฏิเสธ',
+  apiSaveScoreWeights(T2, { enabled: true, weights: { VICE_DIRECTOR: 120, HEAD_AFFAIRS: 0, HEAD_LEVEL: 0, HEAD_DUTY: 0 } }).success === false);
+check('น้ำหนักเป็น 0 ทุกกลุ่ม → ปฏิเสธ',
+  apiSaveScoreWeights(T2, { enabled: true, weights: { VICE_DIRECTOR: 0, HEAD_AFFAIRS: 0, HEAD_LEVEL: 0, HEAD_DUTY: 0 } }).success === false);
+
+// เตรียมข้อมูลของครู 1 คน ให้มีคะแนนจาก 2 กลุ่มต่างกัน เพื่อตรวจผลรวมจริง
+const WYEAR = '2590', WSEM = '1';
+appendRecords_(SHEETS.RESULTS, [
+  { 'รหัสการประเมิน': 'EVR-W001', 'วันที่บันทึก': new Date(), 'ปีการศึกษา': WYEAR, 'ภาคเรียน': WSEM,
+    'ผู้ประเมิน': 'รอง ผอ. ทดสอบ', 'บทบาทผู้ประเมิน': ROLES.VICE_DIRECTOR,
+    'รหัสครู': 'TCH-W001', 'ครูผู้รับการประเมิน': 'นายถ่วง น้ำหนัก',
+    'คะแนนเฉลี่ย': 5, 'ระดับผลการประเมิน': 'ดีเยี่ยม', 'สถานะ': 'ปกติ' },
+  { 'รหัสการประเมิน': 'EVR-W002', 'วันที่บันทึก': new Date(), 'ปีการศึกษา': WYEAR, 'ภาคเรียน': WSEM,
+    'ผู้ประเมิน': 'หน.เวร ทดสอบ', 'บทบาทผู้ประเมิน': ROLES.HEAD_DUTY,
+    'รหัสครู': 'TCH-W001', 'ครูผู้รับการประเมิน': 'นายถ่วง น้ำหนัก',
+    'คะแนนเฉลี่ย': 3, 'ระดับผลการประเมิน': 'ดี', 'สถานะ': 'ปกติ' }
+]);
+
+const beforeWeighted = buildSummaryRows_({ year: WYEAR, semester: WSEM })[0];
+check('ยังไม่เปิดถ่วงน้ำหนัก → คะแนนทางการคือค่าเฉลี่ยธรรมดา (4.00)',
+  Math.abs(beforeWeighted.final - 4) < 0.001 && beforeWeighted.weighted === false, beforeWeighted.final);
+
+const previewW = apiPreviewScoreWeights(T2, {
+  year: WYEAR, semester: WSEM, normalize: true,
+  weights: { VICE_DIRECTOR: 80, HEAD_AFFAIRS: 0, HEAD_LEVEL: 0, HEAD_DUTY: 20 }
+});
+check('ทดลองน้ำหนักโดยยังไม่บันทึกได้', previewW.success === true, previewW.message);
+check('คะแนนสุทธิที่ทดลอง = (5×80 + 3×20) ÷ 100 = 4.60',
+  Math.abs(previewW.data.rows[0].netScore - 4.6) < 0.001, previewW.data.rows[0].netScore);
+check('ยังไม่บันทึกจึงไม่กระทบข้อมูลจริง', useRoleWeights_() === false);
+
+const savedW = apiSaveScoreWeights(T2, {
+  enabled: true, normalize: true,
+  weights: { VICE_DIRECTOR: 80, HEAD_AFFAIRS: 0, HEAD_LEVEL: 0, HEAD_DUTY: 20 }
+});
+check('บันทึกและเปิดใช้การถ่วงน้ำหนักได้', savedW.success === true, savedW.message);
+check('ระบบเปิดใช้การถ่วงน้ำหนักแล้ว', useRoleWeights_() === true);
+
+const afterWeighted = buildSummaryRows_({ year: WYEAR, semester: WSEM })[0];
+check('คะแนนทางการเปลี่ยนเป็นคะแนนสุทธิ 4.60',
+  Math.abs(afterWeighted.final - 4.6) < 0.001 && afterWeighted.weighted === true, afterWeighted.final);
+check('ค่าเฉลี่ยธรรมดายังเก็บไว้ให้ตรวจสอบได้', Math.abs(afterWeighted.average - 4) < 0.001);
+check('รายงานมีที่มาของคะแนนรายกลุ่ม',
+  afterWeighted.netBreakdown.length === 4 &&
+  afterWeighted.netBreakdown.filter(b => b.counted).length === 2,
+  afterWeighted.netBreakdown.map(b => b.counted));
+
+const exportedW = apiExportReport(T2, {
+  year: WYEAR, semester: WSEM, teacherIds: ['TCH-W001'], formats: ['xlsx'], options: {}
+});
+check('ส่งออกรายงานพร้อมคะแนนสุทธิได้', exportedW.success === true, exportedW.message);
+const wSheets = mock.store.created.slice(-1)[0].getSheets().map(s => s.getName());
+check('รายงานมีแผ่นงานอธิบายวิธีคิดคะแนนสุทธิ',
+  wSheets.indexOf('วิธีคิดคะแนนสุทธิ') !== -1, wSheets);
+
+// คืนค่าเดิมเพื่อไม่ให้กระทบการทดสอบอื่น
+apiSaveScoreWeights(T2, { enabled: false, normalize: true, weights: DEFAULT_ROLE_WEIGHTS });
+check('ปิดการถ่วงน้ำหนักกลับได้', useRoleWeights_() === false);
+
+/* ---------- 17. นำเข้ารายชื่อครูจากไฟล์ CSV และ Excel ---------- */
+section('นำเข้ารายชื่อครูจากไฟล์');
+
+const b64 = function (text) { return Buffer.from(text, 'utf8').toString('base64'); };
+const csvFile = function (text) {
+  return { fileName: 'teachers.csv', mimeType: 'text/csv', base64: b64(text) };
+};
+
+// เทมเพลต
+const tplXlsx = apiDownloadTeacherTemplate(T2, 'xlsx');
+check('ดาวน์โหลดเทมเพลต Excel ได้', tplXlsx.success === true && /\.xlsx$/.test(tplXlsx.data.name),
+  tplXlsx.message || tplXlsx.data.name);
+check('เทมเพลต Excel มีข้อมูลไฟล์', !!tplXlsx.data.base64);
+const tplCsv = apiDownloadTeacherTemplate(T2, 'csv');
+check('ดาวน์โหลดเทมเพลต CSV ได้', tplCsv.success === true && /\.csv$/.test(tplCsv.data.name));
+const tplText = Buffer.from(tplCsv.data.base64, 'base64').toString('utf8');
+check('เทมเพลต CSV มี BOM ให้ Excel อ่านภาษาไทยถูก', tplText.charCodeAt(0) === 0xFEFF);
+check('เทมเพลต CSV มีหัวตารางครบ', tplText.indexOf('รหัสครู') !== -1 && tplText.indexOf('เวรประจำวัน') !== -1);
+
+// CSV ที่มีหัวตาราง + เครื่องหมายคำพูด
+const csv1 =
+  'คำนำหน้า,ชื่อ,นามสกุล,กลุ่มสาระ/ฝ่าย,ระดับชั้นที่ปรึกษา,เวรประจำวัน,อีเมล\n' +
+  'นาย,นำเข้าหนึ่ง,ทดสอบ,"กลุ่มสาระคณิตศาสตร์, สถิติ",ม.1,จันทร์,import1@school.ac.th\n' +
+  'นาง,นำเข้าสอง,ทดสอบ,ภาษาไทย,2,อังคาร,\n' +
+  'นางสาว,นำเข้าสาม,ทดสอบ,,ม.6,ศุกร์,ไม่ใช่อีเมล\n';
+const p1 = apiPreviewTeacherImport(T2, csvFile(csv1), {});
+check('อ่านไฟล์ CSV และจับคู่คอลัมน์ได้', p1.success === true, p1.message);
+check('พบข้อมูล 3 แถว', p1.data.summary.total === 3, p1.data.summary);
+check('อ่านค่าที่มีจุลภาคในเครื่องหมายคำพูดได้',
+  p1.data.rows[0].department === 'กลุ่มสาระคณิตศาสตร์, สถิติ', p1.data.rows[0].department);
+check('แปลงระดับชั้น "2" เป็น "ม.2" ให้อัตโนมัติ', p1.data.rows[1].level === 'ม.2', p1.data.rows[1].level);
+check('ตรวจพบอีเมลผิดรูปแบบ', p1.data.rows[2].status_ === 'error', p1.data.rows[2].message);
+check('นับสรุปถูกต้อง (ใหม่ 2 · ผิดพลาด 1)',
+  p1.data.summary.new === 2 && p1.data.summary.error === 1, p1.data.summary);
+
+const teachersBeforeImport = readTable_(SHEETS.TEACHERS).rows.length;
+const commit1 = apiCommitTeacherImport(T2, { rows: p1.data.rows, fileName: 'teachers.csv' });
+check('นำเข้าเฉพาะแถวที่ถูกต้อง', commit1.success === true && commit1.data.added === 2, commit1.message);
+check('จำนวนครูเพิ่มขึ้น 2 คน',
+  readTable_(SHEETS.TEACHERS).rows.length === teachersBeforeImport + 2);
+const imported1 = readTable_(SHEETS.TEACHERS).rows
+  .filter(r => str_(r['ชื่อ-นามสกุล']) === 'นายนำเข้าหนึ่ง ทดสอบ')[0];
+check('บันทึกข้อมูลครบทุกช่อง',
+  !!imported1 && str_(imported1['ระดับชั้นที่ปรึกษา']) === 'ม.1' &&
+  str_(imported1['เวรประจำวัน (ค่าเริ่มต้น)']) === 'จันทร์' &&
+  /^TCH-\d{4}$/.test(str_(imported1['รหัสครู'])),
+  imported1 && [imported1['ระดับชั้นที่ปรึกษา'], imported1['เวรประจำวัน (ค่าเริ่มต้น)'], imported1['รหัสครู']]);
+
+// นำเข้าซ้ำ → ข้าม
+const p2 = apiPreviewTeacherImport(T2, csvFile(csv1), {});
+check('ตรวจพบชื่อซ้ำกับที่มีในระบบ', p2.data.summary.duplicate === 2, p2.data.summary);
+check('ไม่มีรายการให้เพิ่มซ้ำ',
+  apiCommitTeacherImport(T2, { rows: p2.data.rows }).success === false);
+
+// โหมดอัปเดตข้อมูลเดิม
+const csvUpdate =
+  'คำนำหน้า,ชื่อ,นามสกุล,ระดับชั้นที่ปรึกษา,เวรประจำวัน\n' +
+  'นาย,นำเข้าหนึ่ง,ทดสอบ,ม.5,พฤหัสบดี\n';
+const p3 = apiPreviewTeacherImport(T2, csvFile(csvUpdate), { updateExisting: true });
+check('โหมดอัปเดต: ระบุว่าเป็นการอัปเดต', p3.data.summary.update === 1, p3.data.summary);
+const commit3 = apiCommitTeacherImport(T2, { rows: p3.data.rows, updateExisting: true });
+check('อัปเดตข้อมูลเดิมสำเร็จ', commit3.success === true && commit3.data.updated === 1, commit3.message);
+const updated1 = readTable_(SHEETS.TEACHERS).rows
+  .filter(r => str_(r['ชื่อ-นามสกุล']) === 'นายนำเข้าหนึ่ง ทดสอบ')[0];
+check('ข้อมูลถูกแก้ไขจริง',
+  str_(updated1['ระดับชั้นที่ปรึกษา']) === 'ม.5' && str_(updated1['เวรประจำวัน (ค่าเริ่มต้น)']) === 'พฤหัสบดี',
+  [updated1['ระดับชั้นที่ปรึกษา'], updated1['เวรประจำวัน (ค่าเริ่มต้น)']]);
+check('ไม่เกิดรายชื่อซ้ำหลังอัปเดต',
+  readTable_(SHEETS.TEACHERS).rows.filter(r => str_(r['ชื่อ-นามสกุล']) === 'นายนำเข้าหนึ่ง ทดสอบ').length === 1);
+
+// ไฟล์ที่มีเฉพาะคอลัมน์ "ชื่อ-นามสกุล"
+const csvFullName = 'ชื่อ-นามสกุล,ระดับชั้น,เวร\nนางสาวรวมชื่อ สกุลเดียว,ม.3,พุธ\n';
+const p4 = apiPreviewTeacherImport(T2, csvFile(csvFullName), {});
+check('แยกคำนำหน้า/ชื่อ/นามสกุล จากคอลัมน์ชื่อเต็มได้',
+  p4.data.rows[0].prefix === 'นางสาว' && p4.data.rows[0].firstName === 'รวมชื่อ' &&
+  p4.data.rows[0].lastName === 'สกุลเดียว',
+  [p4.data.rows[0].prefix, p4.data.rows[0].firstName, p4.data.rows[0].lastName]);
+check('รองรับชื่อคอลัมน์แบบย่อ (ระดับชั้น/เวร)',
+  p4.data.rows[0].level === 'ม.3' && p4.data.rows[0].day === 'พุธ');
+
+// ไฟล์ที่ไม่มีหัวตาราง (ใช้ลำดับคอลัมน์)
+const tsvNoHeader = 'นาย\tไม่มีหัว\tตาราง\tม.4\tอังคาร\t\n';
+const p5 = apiPreviewTeacherImport(T2, { fileName: 'x.tsv', mimeType: 'text/tab-separated-values', base64: b64(tsvNoHeader) }, {});
+check('ไฟล์ไม่มีหัวตาราง → อ่านตามลำดับคอลัมน์',
+  p5.data.hasHeader === false && p5.data.rows[0].firstName === 'ไม่มีหัว' && p5.data.rows[0].level === 'ม.4',
+  [p5.data.hasHeader, p5.data.rows[0].firstName, p5.data.rows[0].level]);
+
+// ไฟล์ Excel (จำลองการแปลงผ่าน Google Drive)
+mock.store.importTable = [
+  ['รหัสครู', 'คำนำหน้า', 'ชื่อ', 'นามสกุล', 'ระดับชั้นที่ปรึกษา', 'เวรประจำวัน', 'สถานะ'],
+  ['', 'นาย', 'เอกซ์เซล', 'หนึ่ง', 'ม.2', 'จันทร์', 'ใช้งาน'],
+  ['', 'นาง', 'เอกซ์เซล', 'สอง', 'ม.4', 'ศุกร์', 'ไม่ใช้งาน']
+];
+const pXlsx = apiPreviewTeacherImport(T2, {
+  fileName: 'teachers.xlsx',
+  mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  base64: b64('PK-fake-xlsx-content')
+}, {});
+check('อ่านไฟล์ Excel ผ่านการแปลงของ Google Drive ได้', pXlsx.success === true, pXlsx.message);
+check('พบข้อมูลจากไฟล์ Excel 2 แถว', pXlsx.data.summary.total === 2, pXlsx.data.summary);
+const commitXlsx = apiCommitTeacherImport(T2, { rows: pXlsx.data.rows, fileName: 'teachers.xlsx' });
+check('นำเข้าจากไฟล์ Excel สำเร็จ', commitXlsx.success === true && commitXlsx.data.added === 2, commitXlsx.message);
+check('อ่านค่าสถานะจากไฟล์ Excel ถูกต้อง',
+  readTable_(SHEETS.TEACHERS).rows.filter(r => str_(r['ชื่อ-นามสกุล']) === 'นางเอกซ์เซล สอง')
+    .map(r => str_(r['สถานะ']))[0] === 'ไม่ใช้งาน');
+check('บันทึกการนำเข้าลงประวัติการใช้งาน',
+  readLogs_(30).some(l => l.action.indexOf('นำเข้ารายชื่อครูจากไฟล์') !== -1));
+
+check('ไฟล์ว่าง → แจ้งเตือน', apiPreviewTeacherImport(T2, csvFile(''), {}).success === false);
+check('ไม่ส่งไฟล์มา → แจ้งเตือน', apiPreviewTeacherImport(T2, null, {}).success === false);
+
+/* ---------- 18. ตรวจสุขภาพระบบ ---------- */
 section('ตรวจสุขภาพระบบ');
 const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);
