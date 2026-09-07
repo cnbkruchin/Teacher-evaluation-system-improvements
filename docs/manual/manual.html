@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>คู่มือการใช้งานสำหรับครูผู้ประเมิน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap">
+<style>
+:root{
+  --brand:#3730a3; --brand-2:#4f46e5; --brand-light:#eef2ff; --teal:#0d9488;
+  --ink:#111827; --ink-2:#374151; --ink-3:#6b7280; --line:#e5e7eb;
+  --ok:#15803d; --ok-bg:#dcfce7; --warn:#b45309; --warn-bg:#fef3c7;
+  --danger:#b91c1c; --danger-bg:#fee2e2; --info:#0369a1; --info-bg:#e0f2fe;
+}
+@page { size:A4; margin:17mm 15mm 20mm 15mm; }
+@page :first { margin:0; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Sarabun',sans-serif;font-size:10.5pt;line-height:1.62;color:var(--ink);
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+/* ---------- ปก ---------- */
+.cover{height:297mm;display:flex;flex-direction:column;page-break-after:always;position:relative;overflow:hidden}
+.cover__top{background:linear-gradient(150deg,#312e81 0%,#4338ca 55%,#0e7490 100%);color:#fff;
+  padding:38mm 20mm 22mm;flex:1;display:flex;flex-direction:column;justify-content:center;position:relative}
+.cover__top::after{content:'';position:absolute;right:-40mm;top:-40mm;width:120mm;height:120mm;
+  border-radius:50%;background:rgba(255,255,255,.07)}
+.cover__top::before{content:'';position:absolute;left:-30mm;bottom:-50mm;width:100mm;height:100mm;
+  border-radius:50%;background:rgba(255,255,255,.05)}
+.cover .mark{width:26mm;height:26mm;border-radius:8mm;background:rgba(255,255,255,.18);
+  display:flex;align-items:center;justify-content:center;font-size:38pt;margin-bottom:10mm}
+.cover h1{font-size:30pt;font-weight:700;line-height:1.22;letter-spacing:-.4pt}
+.cover .sub{font-size:14pt;opacity:.92;margin-top:5mm;font-weight:400}
+.cover .kicker{font-size:11pt;opacity:.8;letter-spacing:2pt;margin-bottom:6mm}
+.cover__bottom{padding:14mm 20mm;background:#fff;display:flex;justify-content:space-between;align-items:flex-end}
+.cover__meta{font-size:10pt;color:var(--ink-3);line-height:1.9}
+.cover__meta b{color:var(--ink);font-weight:600}
+.cover__school{border:1.2pt dashed var(--line);border-radius:4mm;padding:5mm 7mm;font-size:9.5pt;color:var(--ink-3);min-width:62mm}
+.cover__school .fill{border-bottom:.8pt solid var(--line);height:7mm;margin-top:2mm}
+
+/* ---------- โครงหน้า ---------- */
+h2{font-size:16pt;font-weight:700;color:var(--brand);margin:0 0 4mm;padding-bottom:2.5mm;
+  border-bottom:1.6pt solid var(--brand);page-break-after:avoid}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;width:9mm;height:9mm;border-radius:2.4mm;
+  background:var(--brand);color:#fff;font-size:11pt;margin-right:3mm;vertical-align:-1.6mm}
+h3{font-size:12pt;font-weight:600;color:var(--brand-2);margin:6mm 0 2.5mm;page-break-after:avoid}
+h4{font-size:10.5pt;font-weight:600;margin:4mm 0 1.5mm}
+p{margin-bottom:2.5mm;text-align:justify}
+ul,ol{margin:0 0 3mm 6mm}
+li{margin-bottom:1.6mm}
+b,strong{font-weight:600}
+.section{page-break-before:always}
+.lead{font-size:11pt;color:var(--ink-2);margin-bottom:5mm}
+
+/* ---------- องค์ประกอบ ---------- */
+.steps{counter-reset:step;margin:3mm 0}
+.step{position:relative;padding:0 0 4.5mm 13mm;page-break-inside:avoid}
+.step::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:.4mm;
+  width:8.5mm;height:8.5mm;border-radius:50%;background:var(--brand-2);color:#fff;
+  font-size:10pt;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step::after{content:'';position:absolute;left:4.25mm;top:9.4mm;bottom:0;width:.6pt;background:var(--line)}
+.step:last-child::after{display:none}
+.step h4{margin:0 0 1mm}
+.step p{margin-bottom:1mm}
+
+.note{border-left:3.4pt solid var(--info);background:var(--info-bg);color:var(--info);
+  padding:3.5mm 5mm;border-radius:0 2.5mm 2.5mm 0;margin:3.5mm 0;font-size:10pt;page-break-inside:avoid}
+.note--warn{border-left-color:var(--warn);background:var(--warn-bg);color:var(--warn)}
+.note--ok{border-left-color:var(--ok);background:var(--ok-bg);color:var(--ok)}
+.note--danger{border-left-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
+.note b{color:inherit}
+
+table{width:100%;border-collapse:collapse;font-size:9.5pt;margin:3mm 0 4mm;page-break-inside:avoid}
+th{background:var(--brand);color:#fff;padding:2.4mm 3mm;text-align:left;font-weight:600;font-size:9.5pt}
+td{padding:2.2mm 3mm;border-bottom:.6pt solid var(--line);vertical-align:top}
+tr:nth-child(even) td{background:#fafafa}
+td.c,th.c{text-align:center}
+.score-tag{display:inline-block;padding:.6mm 2.6mm;border-radius:3mm;font-size:9pt;font-weight:600}
+.s5{background:#dcfce7;color:#15803d} .s4{background:#e7f5d8;color:#4d7c0f}
+.s3{background:#fef9c3;color:#a16207} .s2{background:#ffedd5;color:#c2410c}
+.s1{background:#fee2e2;color:#b91c1c}
+
+figure{margin:3mm 0;page-break-inside:avoid;text-align:center}
+figure img{width:100%;border:.8pt solid var(--line);border-radius:2.5mm}
+figure img.narrow{width:46%}
+figure img.half{width:64%}
+figure img.big{width:60%}
+figure img.phone{width:26%}
+figcaption{font-size:9pt;color:var(--ink-3);margin-top:2mm;text-align:center}
+
+.grid2{display:flex;gap:5mm;margin:3mm 0}
+.grid2>*{flex:1}
+.card{border:.8pt solid var(--line);border-radius:3mm;padding:4mm 5mm;page-break-inside:avoid}
+.card h4{margin-top:0;color:var(--brand-2)}
+.card--tint{background:var(--brand-light);border-color:#c7d2fe}
+
+.toc{margin-top:4mm}
+.toc a{display:flex;justify-content:space-between;text-decoration:none;color:var(--ink);
+  padding:2.6mm 0;border-bottom:.6pt dotted var(--line);font-size:11pt}
+.toc .t{font-weight:600}
+.toc .pg{color:var(--ink-3);font-size:10pt}
+.toc .sub{padding-left:8mm;font-size:10pt;font-weight:400;color:var(--ink-2)}
+
+.kbd{display:inline-block;border:.8pt solid var(--line);border-bottom-width:1.6pt;border-radius:1.6mm;
+  padding:.3mm 2mm;font-size:9.5pt;background:#fafafa}
+.formula{background:#f8fafc;border:.8pt solid var(--line);border-radius:2.5mm;padding:4mm 5mm;
+  text-align:center;font-size:10.5pt;margin:3mm 0}
+.formula b{color:var(--brand)}
+.faq{page-break-inside:avoid;margin-bottom:4mm}
+.faq .q{font-weight:600;color:var(--brand-2);margin-bottom:1mm}
+.faq .a{color:var(--ink-2)}
+.hr{height:.6pt;background:var(--line);margin:6mm 0}
+.chips{display:flex;flex-wrap:wrap;gap:2mm;margin:2mm 0 3mm}
+.chip{background:var(--brand-light);color:var(--brand);border-radius:3mm;padding:1mm 3mm;font-size:9.5pt;font-weight:600}
+.end{text-align:center;color:var(--ink-3);font-size:9.5pt;margin-top:10mm;padding-top:5mm;border-top:.6pt solid var(--line)}
+</style>
+</head>
+<body>
+
+<!-- ==================== ปก ==================== -->
+<div class="cover">
+  <div class="cover__top">
+    <div class="mark">🏫</div>
+    <div class="kicker">คู่มือการใช้งาน</div>
+    <h1>ระบบประเมินผล<br>การปฏิบัติงานครู</h1>
+    <div class="sub">สำหรับครูผู้ประเมิน · กลุ่มบริหารงานกิจการนักเรียน</div>
+  </div>
+  <div class="cover__bottom">
+    <div class="cover__meta">
+      <b>เวอร์ชัน 3.2</b><br>
+      ใช้งานผ่านเว็บเบราว์เซอร์<br>
+      คอมพิวเตอร์ · แท็บเล็ต · โทรศัพท์มือถือ
+    </div>
+    <div class="cover__school">
+      โรงเรียน
+      <div class="fill"></div>
+      ผู้ดูแลระบบ / ผู้ประสานงาน
+      <div class="fill"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== สารบัญ ==================== -->
+<h2><span class="n">≡</span>สารบัญ</h2>
+<div class="toc">
+  <a><span class="t">1. เริ่มต้นใช้งาน</span><span class="pg">{{PG1}}</span></a>
+  <a><span class="t sub">1.1 สิ่งที่ต้องเตรียม · 1.2 เข้าสู่ระบบ · 1.3 เปลี่ยนรหัสผ่านครั้งแรก</span><span class="pg"></span></a>
+  <a><span class="t">2. รู้จักหน้าจอ</span><span class="pg">{{PG2}}</span></a>
+  <a><span class="t">3. การประเมินครู</span><span class="pg">{{PG3}}</span></a>
+  <a><span class="t sub">3.1 ขั้นตอน · 3.2 เกณฑ์คะแนน · 3.3 ใครประเมินใครได้บ้าง</span><span class="pg"></span></a>
+  <a><span class="t">4. แก้ไขผล · ดูประวัติ · ตารางเวร</span><span class="pg">{{PG4}}</span></a>
+  <a><span class="t">5. บัญชีและรหัสผ่าน</span><span class="pg">{{PG5}}</span></a>
+  <a><span class="t">6. คำถามที่พบบ่อย</span><span class="pg">{{PG6}}</span></a>
+  <a><span class="t">ภาคผนวก: สรุปสำหรับผู้ดูแลระบบ</span><span class="pg">{{PG7}}</span></a>
+</div>
+
+<div class="note" style="margin-top:8mm">
+  <b>คู่มือนี้สำหรับใคร</b><br>
+  ครูที่ได้รับมอบหมายให้เป็น <b>ผู้ประเมิน</b> ได้แก่ รองผู้อำนวยการฝ่ายกิจการนักเรียน,
+  หัวหน้ากลุ่มบริหารงานกิจการนักเรียน, หัวหน้าระดับชั้น และหัวหน้าเวรประจำวัน<br>
+  ส่วนท้ายเล่มมีสรุปสำหรับ <b>ผู้ดูแลระบบ</b> ไว้ให้ 1 หน้า
+</div>
+
+<div class="grid2" style="margin-top:6mm">
+  <div class="card card--tint">
+    <h4>⏱️ ใช้เวลาไม่นาน</h4>
+    <p style="margin:0">ประเมินครู 1 คน ใช้เวลาประมาณ 1–2 นาที
+    ระบบมีปุ่มให้คะแนนรวดเร็ว แล้วปรับเฉพาะข้อที่ต้องการ</p>
+  </div>
+  <div class="card card--tint">
+    <h4>📱 ทำได้ทุกที่</h4>
+    <p style="margin:0">เปิดจากลิงก์เดียวได้ทั้งคอมพิวเตอร์ แท็บเล็ต และมือถือ
+    ไม่ต้องติดตั้งโปรแกรมเพิ่ม</p>
+  </div>
+</div>
+
+<!-- ==================== 1. เริ่มต้นใช้งาน ==================== -->
+<div class="section">
+<h2><span class="n">1</span>เริ่มต้นใช้งาน</h2>
+
+<h3>1.1 สิ่งที่ต้องเตรียม</h3>
+<table>
+  <tr><th style="width:38mm">รายการ</th><th>รายละเอียด</th></tr>
+  <tr><td><b>ลิงก์เข้าระบบ</b></td><td>ผู้ดูแลระบบจะส่งลิงก์ให้ทางไลน์กลุ่มหรืออีเมล — บันทึกไว้ในหน้าจอหลักของมือถือได้</td></tr>
+  <tr><td><b>ชื่อ-นามสกุล</b></td><td>ชื่อของท่านที่อยู่ในระบบ (เลือกจากรายการ)</td></tr>
+  <tr><td><b>รหัสผ่าน</b></td><td>ผู้ดูแลระบบเป็นผู้ออกให้ ระบบสุ่มให้ครั้งแรกและจะให้เปลี่ยนเมื่อเข้าใช้ครั้งแรก</td></tr>
+</table>
+
+<h3>1.2 ขั้นตอนเข้าสู่ระบบ</h3>
+<div class="steps">
+  <div class="step">
+    <h4>เปิดลิงก์ที่ได้รับ</h4>
+    <p>ระบบจะแสดงหน้าเข้าสู่ระบบ โดยเลือกแท็บ <b>📝 ผู้ประเมิน</b> ไว้ให้อยู่แล้ว</p>
+  </div>
+  <div class="step">
+    <h4>เลือกชื่อ-นามสกุลของท่าน</h4>
+    <p>กดที่ช่องรายชื่อแล้วเลือกชื่อตนเอง (บางโรงเรียนอาจตั้งค่าให้พิมพ์ชื่อเอง)</p>
+  </div>
+  <div class="step">
+    <h4>กรอกรหัสผ่าน แล้วกด “เข้าสู่ระบบ”</h4>
+    <p>หากกรอกผิดหลายครั้งติดกัน ระบบจะล็อกบัญชีชั่วคราวประมาณ 15 นาที เพื่อความปลอดภัย</p>
+  </div>
+</div>
+
+<figure>
+  <img class="narrow" src="shots/login.jpg" alt="หน้าเข้าสู่ระบบ">
+  <figcaption>หน้าเข้าสู่ระบบ — เลือกแท็บ “ผู้ประเมิน” เลือกชื่อ แล้วกรอกรหัสผ่าน</figcaption>
+</figure>
+
+<h3>1.3 เปลี่ยนรหัสผ่านครั้งแรก</h3>
+<p>เมื่อเข้าใช้งานครั้งแรกด้วยรหัสผ่านที่ผู้ดูแลระบบออกให้ ระบบจะพาไปหน้า
+<b>🔑 เปลี่ยนรหัสผ่าน</b> โดยอัตโนมัติ กรุณาตั้งรหัสผ่านใหม่ที่มีเพียงท่านเท่านั้นที่ทราบ</p>
+<div class="note note--ok">
+  <b>เงื่อนไขรหัสผ่านใหม่</b> — อย่างน้อย 8 ตัวอักษร มีทั้งตัวอักษรและตัวเลข
+  และต้องไม่ใช่รหัสที่คาดเดาง่าย เช่น <span class="kbd">password</span> <span class="kbd">123456</span>
+</div>
+</div>
+
+<!-- ==================== 2. รู้จักหน้าจอ ==================== -->
+<div class="section">
+<h2><span class="n">2</span>รู้จักหน้าจอ</h2>
+
+<h3>เมนูของครูผู้ประเมิน</h3>
+<table>
+  <tr><th style="width:52mm">เมนู</th><th>ใช้ทำอะไร</th></tr>
+  <tr><td>📝 <b>แบบประเมิน</b></td><td>ให้คะแนนครู — เมนูหลักที่ใช้บ่อยที่สุด</td></tr>
+  <tr><td>📋 <b>ผลที่ฉันประเมินแล้ว</b></td><td>ดูรายการที่บันทึกไปแล้ว และดูคะแนนรายข้อย้อนหลัง</td></tr>
+  <tr><td>📅 <b>ตารางเวรประจำวัน</b></td><td>ดูตารางเวรของภาคเรียนที่เลือก แยกตามวัน</td></tr>
+  <tr><td>🔑 <b>เปลี่ยนรหัสผ่าน</b></td><td>ตั้งรหัสผ่านใหม่ด้วยตนเอง</td></tr>
+</table>
+
+<h3>ปุ่มบนแถบด้านบน</h3>
+<table>
+  <tr><th class="c" style="width:16mm">ปุ่ม</th><th>หน้าที่</th></tr>
+  <tr><td class="c">☰</td><td>เปิดเมนู (แสดงเฉพาะบนมือถือและแท็บเล็ตแนวตั้ง)</td></tr>
+  <tr><td class="c">🔄</td><td>โหลดข้อมูลใหม่ล่าสุดจากระบบ</td></tr>
+  <tr><td class="c">⛶</td><td>ขยายเต็มหน้าจอ</td></tr>
+  <tr><td class="c">🌓</td><td>สลับโหมดสว่าง / โหมดกลางคืน</td></tr>
+  <tr><td class="c">🚪</td><td>ออกจากระบบ</td></tr>
+</table>
+
+<h3>การแสดงผลตามอุปกรณ์</h3>
+<div class="grid2">
+  <div class="card">
+    <h4>💻 คอมพิวเตอร์ / แท็บเล็ต</h4>
+    <p style="margin:0">เมนูอยู่ด้านซ้าย เห็นทุกเมนูพร้อมกัน
+    บนแท็บเล็ตเมนูจะย่อเป็นแถบไอคอน แตะค้างเพื่อดูชื่อเมนู</p>
+  </div>
+  <div class="card">
+    <h4>📱 มือถือ</h4>
+    <p style="margin:0">มีแถบเมนูด้านล่างสำหรับเมนูที่ใช้บ่อย
+    และกด ☰ เพื่อเปิดเมนูทั้งหมด ตารางข้อมูลจะแสดงเป็นการ์ดอ่านง่าย</p>
+  </div>
+</div>
+
+<figure>
+  <img class="phone" src="shots/phone.jpg" alt="หน้าจอบนมือถือ">
+  <figcaption>หน้าจอบนโทรศัพท์มือถือ — มีแถบเมนูด้านล่าง และปุ่มให้คะแนนขนาดใหญ่กดง่าย</figcaption>
+</figure>
+</div>
+
+<!-- ==================== 3. การประเมิน ==================== -->
+<div class="section">
+<h2><span class="n">3</span>การประเมินครู</h2>
+
+<h3>3.1 ขั้นตอนการประเมิน</h3>
+<div class="steps">
+  <div class="step">
+    <h4>ตรวจปีการศึกษาและภาคเรียน</h4>
+    <p>ระบบตั้งค่าภาคเรียนปัจจุบันไว้ให้แล้ว หากต้องการประเมินย้อนหลัง
+    ให้เลือกภาคเรียนแล้วกด <b>เปลี่ยนภาคเรียน</b></p>
+  </div>
+  <div class="step">
+    <h4>เลือกครูที่จะประเมิน</h4>
+    <p>พิมพ์ชื่อในช่องค้นหาเพื่อหาได้เร็วขึ้น ครูที่ท่านประเมินไปแล้วจะมีเครื่องหมาย ✅ นำหน้า</p>
+  </div>
+  <div class="step">
+    <h4>ตรวจข้อมูลครูที่ระบบแสดง</h4>
+    <p>ระบบจะแสดงระดับชั้นที่ปรึกษา เวรประจำวัน จุดปฏิบัติหน้าที่ และเวลาของภาคเรียนนั้น
+    เพื่อใช้ประกอบการพิจารณา</p>
+  </div>
+  <div class="step">
+    <h4>ให้คะแนน 1–5 ให้ครบทุกข้อ</h4>
+    <p>ใช้ปุ่มลัด <b>ให้ 5 ทุกข้อ / ให้ 4 ทุกข้อ / ให้ 3 ทุกข้อ</b> แล้วปรับเฉพาะข้อที่ต้องการ
+    จะเร็วที่สุด ตัวเลขมุมขวาบนบอกว่าให้คะแนนไปแล้วกี่ข้อ</p>
+  </div>
+  <div class="step">
+    <h4>กรอกข้อเสนอแนะ (ถ้ามี) แล้วกดบันทึก</h4>
+    <p>ปุ่ม <b>✅ บันทึกผลการประเมิน</b> จะกดได้เมื่อให้คะแนนครบทุกข้อแล้วเท่านั้น</p>
+  </div>
+</div>
+
+<figure>
+  <img class="half" src="shots/evaluate.jpg" alt="หน้าแบบประเมิน">
+  <figcaption>หน้าแบบประเมิน — ข้อมูลครูและเวรประจำวัน ปุ่มให้คะแนนรวดเร็ว และเกณฑ์การประเมินรายข้อ</figcaption>
+</figure>
+
+<div class="note note--warn">
+  <b>ปุ่มบันทึกยังกดไม่ได้?</b> แปลว่ายังให้คะแนนไม่ครบทุกข้อ
+  ดูตัวเลขมุมขวาบนของกล่องเกณฑ์ เช่น <span class="kbd">8 / 10</span> แสดงว่ายังเหลืออีก 2 ข้อ
+</div>
+
+<h3>3.2 เกณฑ์การให้คะแนน</h3>
+<table>
+  <tr><th class="c" style="width:18mm">คะแนน</th><th style="width:28mm">ความหมาย</th><th>คำอธิบาย</th></tr>
+  <tr><td class="c"><span class="score-tag s5">5</span></td><td><b>ดีเยี่ยม</b></td><td>ปฏิบัติได้ครบถ้วนสมบูรณ์ เป็นแบบอย่างที่ดี</td></tr>
+  <tr><td class="c"><span class="score-tag s4">4</span></td><td><b>ดีมาก</b></td><td>ปฏิบัติได้ครบถ้วน มีคุณภาพดี</td></tr>
+  <tr><td class="c"><span class="score-tag s3">3</span></td><td><b>ดี</b></td><td>ปฏิบัติได้ตามมาตรฐาน</td></tr>
+  <tr><td class="c"><span class="score-tag s2">2</span></td><td><b>พอใช้</b></td><td>ปฏิบัติได้บางส่วน ต้องปรับปรุง</td></tr>
+  <tr><td class="c"><span class="score-tag s1">1</span></td><td><b>ปรับปรุง</b></td><td>ปฏิบัติได้น้อย ต้องปรับปรุงอย่างเร่งด่วน</td></tr>
+</table>
+
+<h3>3.3 ใครประเมินใครได้บ้าง</h3>
+<p>ระบบแสดงเฉพาะครูและเกณฑ์ที่ท่าน<b>มีสิทธิ์ประเมิน</b>เท่านั้น จึงไม่ต้องกังวลว่าจะประเมินผิดคน</p>
+<table>
+  <tr><th style="width:58mm">บทบาทของท่าน</th><th>ประเมินครูกลุ่มใด</th><th class="c" style="width:22mm">จำนวนข้อ</th></tr>
+  <tr><td>รองผู้อำนวยการฝ่ายกิจการนักเรียน</td><td>ครูทุกคน</td><td class="c">10 ข้อ</td></tr>
+  <tr><td>หัวหน้ากลุ่มบริหารงานกิจการนักเรียน</td><td>ครูทุกคน</td><td class="c">10 ข้อ</td></tr>
+  <tr><td>หัวหน้าระดับชั้น</td><td>ครูในระดับชั้นที่รับผิดชอบ</td><td class="c">8 ข้อ</td></tr>
+  <tr><td>หัวหน้าเวรประจำวัน</td><td>ครูที่อยู่เวรวันเดียวกัน ตามตารางเวรของภาคเรียนนั้น</td><td class="c">1 ข้อ</td></tr>
+</table>
+<div class="note">
+  <b>จำนวนข้ออาจต่างจากนี้ได้</b> หากผู้ดูแลระบบปรับเกณฑ์การประเมินของโรงเรียน
+  ให้ยึดตามที่ระบบแสดงบนหน้าจอเป็นหลัก
+</div>
+</div>
+
+<!-- ==================== 4. แก้ไข/ประวัติ/เวร ==================== -->
+<div class="section">
+<h2><span class="n">4</span>แก้ไขผล · ดูประวัติ · ตารางเวร</h2>
+
+<h3>4.1 แก้ไขผลที่บันทึกไปแล้ว</h3>
+<p>เลือกครูคนเดิมอีกครั้งในเมนู <b>📝 แบบประเมิน</b> ระบบจะดึงคะแนนเดิมขึ้นมาให้แก้ไข
+เมื่อบันทึกใหม่จะแทนที่ผลเดิม</p>
+<div class="note note--ok">
+  <b>ผลเดิมไม่หาย</b> — ทุกครั้งที่บันทึกทับ ระบบจะเก็บฉบับเดิมไว้ในคลังข้อมูลของโรงเรียนโดยอัตโนมัติ
+  จึงตรวจสอบย้อนหลังได้เสมอว่าเคยให้คะแนนอะไรไว้
+</div>
+
+<h3>4.2 ดูผลที่ฉันประเมินแล้ว</h3>
+<p>เมนู <b>📋 ผลที่ฉันประเมินแล้ว</b> แสดงรายการทั้งหมดที่ท่านบันทึกไว้ พร้อมคะแนนเฉลี่ยและระดับผล
+กดปุ่ม <b>ดู</b> เพื่อเปิดดูคะแนนรายข้อและข้อเสนอแนะที่เคยเขียนไว้</p>
+<figure>
+  <img class="half" src="shots/history.jpg" alt="ผลที่ฉันประเมินแล้ว">
+  <figcaption>รายการผลการประเมินที่บันทึกไว้ พร้อมป้ายบอกจำนวนครั้งที่แก้ไข</figcaption>
+</figure>
+
+<h3>4.3 ตารางเวรประจำวัน</h3>
+<p>เมนู <b>📅 ตารางเวรประจำวัน</b> แสดงตารางเวรของภาคเรียนที่เลือก แยกตามวัน
+พร้อมบทบาทในเวร จุดปฏิบัติหน้าที่ และช่วงเวลา</p>
+<div class="note">
+  <b>ตารางเวรแยกตามภาคเรียน</b> — เวรของภาคเรียนที่ 1 และภาคเรียนที่ 2 เก็บแยกกันคนละชุด
+  การเปลี่ยนเวรในภาคเรียนใหม่จึงไม่กระทบข้อมูลและผลการประเมินของภาคเรียนก่อนหน้า
+</div>
+<figure>
+  <img class="half" src="shots/duty.jpg" alt="ตารางเวรประจำวัน">
+  <figcaption>ตารางเวรประจำวันของภาคเรียนที่เลือก</figcaption>
+</figure>
+</div>
+
+<!-- ==================== 5. บัญชีและรหัสผ่าน ==================== -->
+<div class="section">
+<h2><span class="n">5</span>บัญชีและรหัสผ่าน</h2>
+
+<h3>5.1 เปลี่ยนรหัสผ่านด้วยตนเอง</h3>
+<div class="steps">
+  <div class="step"><h4>เข้าเมนู 🔑 เปลี่ยนรหัสผ่าน</h4></div>
+  <div class="step"><h4>กรอกรหัสผ่านเดิม</h4></div>
+  <div class="step"><h4>กรอกรหัสผ่านใหม่ 2 ครั้งให้ตรงกัน</h4>
+    <p>แถบสีใต้ช่องจะบอกความแข็งแรงของรหัสผ่าน — ยิ่งเขียวยิ่งดี</p></div>
+  <div class="step"><h4>กด 💾 บันทึกรหัสผ่านใหม่</h4></div>
+</div>
+<figure>
+  <img class="half" src="shots/password.jpg" alt="หน้าเปลี่ยนรหัสผ่าน">
+  <figcaption>หน้าเปลี่ยนรหัสผ่าน พร้อมแถบบอกความแข็งแรงของรหัสผ่าน</figcaption>
+</figure>
+
+<h3>5.2 ลืมรหัสผ่าน หรือบัญชีถูกล็อก</h3>
+<p>ครูผู้ประเมิน<b>ไม่สามารถรีเซ็ตรหัสผ่านเองได้</b> กรุณาแจ้งผู้ดูแลระบบเพื่อ:</p>
+<ul>
+  <li><b>ออกรหัสผ่านใหม่ให้</b> — ผู้ดูแลจะแจ้งรหัสใหม่ให้ท่าน หรือส่งเข้าอีเมลที่ลงทะเบียนไว้</li>
+  <li><b>ปลดล็อกบัญชี</b> — กรณีกรอกรหัสผ่านผิดหลายครั้งจนถูกล็อก (หรือรอประมาณ 15 นาทีให้ปลดล็อกเอง)</li>
+</ul>
+
+<h3>5.3 ข้อควรปฏิบัติเพื่อความปลอดภัย</h3>
+<ul>
+  <li>ไม่บอกรหัสผ่านกับผู้อื่น แม้เป็นเพื่อนครูด้วยกัน — ระบบบันทึกทุกการกระทำพร้อมชื่อผู้ใช้</li>
+  <li>ใช้เครื่องคนอื่นหรือเครื่องส่วนกลาง ให้กด <b>🚪 ออกจากระบบ</b> ทุกครั้ง</li>
+  <li>ระบบจะออกจากระบบให้เองเมื่อไม่มีการใช้งานนานเกินกำหนด</li>
+</ul>
+</div>
+
+<!-- ==================== 6. FAQ ==================== -->
+<div class="section">
+<h2><span class="n">6</span>คำถามที่พบบ่อย</h2>
+
+<div class="faq"><div class="q">ไม่เห็นชื่อครูที่ต้องการประเมิน?</div>
+<div class="a">ระบบแสดงเฉพาะครูที่ท่านมีสิทธิ์ประเมิน หากเป็น <b>หัวหน้าเวรประจำวัน</b>
+ระบบจะอิงตารางเวรของภาคเรียนที่เลือก — หากครูย้ายวันเวร รายชื่อจะเปลี่ยนตาม
+กรณีที่ควรเห็นแต่ไม่เห็น ให้แจ้งผู้ดูแลระบบตรวจสอบตารางเวรหรือทะเบียนครู</div></div>
+
+<div class="faq"><div class="q">ประเมินผิดคน หรือให้คะแนนผิด ทำอย่างไร?</div>
+<div class="a">เลือกครูคนนั้นอีกครั้งแล้วแก้ไขคะแนน จากนั้นบันทึกใหม่ ระบบจะแทนที่ผลเดิมให้
+โดยเก็บฉบับเดิมไว้ในคลังข้อมูล หากประเมินผิดคนจริง ๆ ให้แจ้งผู้ดูแลระบบลบรายการนั้นออก</div></div>
+
+<div class="faq"><div class="q">บันทึกแล้วขึ้นว่า “เซสชันหมดอายุ”?</div>
+<div class="a">เกิดจากเปิดหน้าจอค้างไว้นานเกินไป ให้เข้าสู่ระบบใหม่แล้วประเมินอีกครั้ง
+เพื่อความปลอดภัยระบบจะไม่รับข้อมูลจากเซสชันที่หมดอายุแล้ว</div></div>
+
+<div class="faq"><div class="q">ต้องประเมินให้ครบทุกคนภายในเมื่อไร?</div>
+<div class="a">เป็นไปตามที่โรงเรียนกำหนด ผู้ดูแลระบบสามารถดูความคืบหน้าของผู้ประเมินแต่ละคนได้จากแดชบอร์ด
+ท่านสามารถทยอยประเมินได้ ไม่ต้องทำครั้งเดียวจบ</div></div>
+
+<div class="faq"><div class="q">ประเมินจากมือถือได้ไหม?</div>
+<div class="a">ได้ ใช้ลิงก์เดียวกัน หน้าจอจะปรับให้เหมาะกับมือถืออัตโนมัติ
+แนะนำให้บันทึกลิงก์ไว้ที่หน้าจอหลักของเครื่องเพื่อเปิดได้เร็ว</div></div>
+
+<div class="faq"><div class="q">คะแนนที่ให้ไป ถูกนำไปคิดอย่างไร?</div>
+<div class="a">ระบบคิดคะแนนเฉลี่ยของครูแต่ละคนจากทุกการประเมิน และโรงเรียนอาจตั้งค่าให้
+<b>ถ่วงน้ำหนักตามกลุ่มผู้ประเมิน</b> ได้ เช่น</div>
+<div class="formula">
+  <b>คะแนนสุทธิ</b> = ( คะแนนเฉลี่ยของกลุ่ม × น้ำหนักของกลุ่ม ) รวมทุกกลุ่ม ÷ ผลรวมน้ำหนักที่ใช้จริง
+</div>
+<div class="a">ตัวอย่าง กำหนด รอง ผอ. 40% · หน.กิจการฯ 30% · หน.ระดับชั้น 20% · หน.เวรฯ 10%
+หากครูได้คะแนนเฉลี่ยจากแต่ละกลุ่มเป็น 5.00, 4.00, 4.50 และ 3.00
+คะแนนสุทธิ = (5.00×40 + 4.00×30 + 4.50×20 + 3.00×10) ÷ 100 = <b>4.40</b>
+โดยครูที่ไม่ได้รับการประเมินจากบางกลุ่ม ระบบจะปรับสัดส่วนให้อัตโนมัติเพื่อไม่ให้เสียเปรียบ</div></div>
+
+<div class="faq"><div class="q">เห็นข้อมูลของครูคนอื่นได้หรือไม่?</div>
+<div class="a">ไม่ได้ ครูผู้ประเมินเห็นเฉพาะผลที่ตนเองบันทึกเท่านั้น
+ภาพรวมคะแนนและรายงานทั้งหมดเป็นสิทธิ์ของผู้ดูแลระบบ</div></div>
+</div>
+
+<!-- ==================== ภาคผนวก ==================== -->
+<div class="section">
+<h2><span class="n">＋</span>ภาคผนวก: สรุปสำหรับผู้ดูแลระบบ</h2>
+<p class="lead">หน้านี้สำหรับครูที่ทำหน้าที่ผู้ดูแลระบบ — รายละเอียดฉบับเต็มอยู่ในคู่มือผู้ดูแลระบบ</p>
+
+<h3>เมนูทั้งหมด</h3>
+<div class="chips">
+  <span class="chip">📊 แดชบอร์ด</span><span class="chip">📋 ผลการประเมิน</span>
+  <span class="chip">📤 ประมวลผล/ส่งออก</span><span class="chip">🗄️ คลังข้อมูลย้อนหลัง</span>
+  <span class="chip">🧑‍🏫 ครูผู้รับการประเมิน</span><span class="chip">👥 ผู้ประเมิน</span>
+  <span class="chip">📅 เวรประจำวัน</span><span class="chip">📝 เกณฑ์การประเมิน</span>
+  <span class="chip">⚖️ น้ำหนักผู้ประเมิน</span><span class="chip">📆 ปีการศึกษาและภาคเรียน</span>
+  <span class="chip">🧹 เคลียร์ข้อมูล</span><span class="chip">⚙️ ตั้งค่าและความปลอดภัย</span>
+  <span class="chip">🕘 ประวัติการใช้งาน</span>
+</div>
+
+<h3>งานประจำในแต่ละภาคเรียน</h3>
+<table>
+  <tr><th style="width:34mm">ช่วงเวลา</th><th>สิ่งที่ต้องทำ</th></tr>
+  <tr><td><b>ต้นภาคเรียน</b></td><td>ตั้งปีการศึกษา/ภาคเรียนปัจจุบัน → คัดลอกหรือสร้างตารางเวรของภาคเรียนใหม่
+    → ตรวจทะเบียนครูและผู้ประเมินให้เป็นปัจจุบัน</td></tr>
+  <tr><td><b>ระหว่างภาคเรียน</b></td><td>ติดตามความคืบหน้าที่แดชบอร์ด → “ความคืบหน้าของผู้ประเมิน”
+    และรีเซ็ต/ปลดล็อกบัญชีให้ครูเมื่อมีการร้องขอ</td></tr>
+  <tr><td><b>ปลายภาคเรียน</b></td><td>เลือกและจัดลำดับผู้ถูกประเมิน → กดประมวลผลดูตัวอย่าง → ส่งออก Excel / PDF</td></tr>
+  <tr><td><b>ปิดภาคเรียน</b></td><td>ย้ายข้อมูลเข้าคลัง (เมนูคลังข้อมูล หรือเมนูเคลียร์ข้อมูล) แล้วเปลี่ยนภาคเรียนปัจจุบัน</td></tr>
+</table>
+
+<h3>งานที่ใช้บ่อย</h3>
+<table>
+  <tr><th style="width:52mm">งาน</th><th>วิธีทำโดยย่อ</th></tr>
+  <tr><td><b>เพิ่มครูทีละหลายคน</b></td><td>ครูผู้รับการประเมิน → 📥 นำเข้ารายชื่อ → ดาวน์โหลดเทมเพลต Excel/CSV
+    → กรอกแล้วอัปโหลดกลับ → ตรวจตารางสถานะ → นำเข้า</td></tr>
+  <tr><td><b>ออกรหัสผ่านให้ผู้ประเมิน</b></td><td>ผู้ประเมิน → ➕ เพิ่มผู้ประเมิน (ระบบสุ่มรหัสให้ และส่งอีเมลอัตโนมัติหากกรอกอีเมลไว้)
+    หรือกด 🔑 รีเซ็ต สำหรับคนที่ลืมรหัส</td></tr>
+  <tr><td><b>ตั้งน้ำหนักกลุ่มผู้ประเมิน</b></td><td>⚖️ น้ำหนักผู้ประเมิน → ปรับ % แต่ละกลุ่ม → กด “ดูผลกระทบก่อนบันทึก” → บันทึก</td></tr>
+  <tr><td><b>ส่งออกรายงาน</b></td><td>ประมวลผล/ส่งออก → เลือกภาคเรียน → เลือกและจัดลำดับผู้ถูกประเมิน
+    → ประมวลผล/ดูตัวอย่าง → ส่งออก Excel หรือ PDF</td></tr>
+</table>
+
+<h3>ลืมรหัสผ่านผู้ดูแลระบบ — มี 3 ช่องทาง</h3>
+<ol>
+  <li><b>OTP ทางอีเมล</b> — หน้าเข้าสู่ระบบ → แท็บผู้ดูแลระบบ → “ลืมรหัสผ่าน?” → รับรหัส 6 หลักทางอีเมลกู้คืน</li>
+  <li><b>เมนูในไฟล์ Google Sheets</b> — 🏫 ระบบประเมินผล → 🆘 ลืมรหัสผ่านผู้ดูแลระบบ (เจ้าของไฟล์เท่านั้น)</li>
+  <li><b>Apps Script Editor</b> — รันฟังก์ชัน <span class="kbd">emergencyResetAdminPassword()</span> แล้วดูรหัสใหม่ที่ Execution log</li>
+</ol>
+<div class="note note--danger">
+  <b>สิ่งที่ต้องทำทันทีหลังติดตั้งระบบ</b> — ตั้ง <b>อีเมลกู้คืนรหัสผ่าน</b> ที่เมนู “ตั้งค่าและความปลอดภัย”
+  แล้วกดปุ่มทดสอบส่งอีเมลให้แน่ใจว่าได้รับจริง มิฉะนั้นหากลืมรหัสผ่านจะกู้คืนได้ยากขึ้น
+</div>
+
+<div class="end">
+  ระบบประเมินผลการปฏิบัติงานครู · กลุ่มบริหารงานกิจการนักเรียน · เวอร์ชัน 3.2<br>
+  หากพบปัญหาการใช้งาน กรุณาติดต่อผู้ดูแลระบบของโรงเรียน
+</div>
+</div>
+
+</body>
+</html>
