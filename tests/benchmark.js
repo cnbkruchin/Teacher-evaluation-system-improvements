@@ -116,7 +116,7 @@ const scenarios = [
 const out = [];
 function freshExecution() {
   // จำลองการเริ่มทำงานครั้งใหม่ของ Apps Script (หน่วยความจำชั่วคราวถูกล้าง)
-  MEMO_.tables = {}; MEMO_.headers = {}; MEMO_.sheets = {};
+  MEMO_.tables = {}; MEMO_.headers = {}; MEMO_.sheets = {}; MEMO_.derived = {};
   SETTINGS_CACHE_ = null;
 }
 function clearSharedCache() {

@@ -104,6 +104,7 @@ App.pages.export = async function (container) {
         '<button class="btn btn--ok" id="btnExportXlsx">📊 ส่งออก Excel</button>' +
         '<button class="btn btn--danger" id="btnExportPdf">📄 ส่งออก PDF</button>' +
         '<button class="btn" id="btnExportBoth">📦 ส่งออกทั้งสองรูปแบบ</button>' +
+        '<button class="btn btn--soft" id="btnExportCards">🪪 รายงานรายบุคคล (หน้าละ 1 คน)</button>' +
         '<button class="btn btn--ghost" id="btnSummarySheet">📑 สรุปลงชีทในไฟล์นี้</button>' +
       '</div>' +
     '</div>' +
@@ -144,6 +145,7 @@ Exporter.bind = function () {
   $('btnExportXlsx').onclick = function () { Exporter.exportReport(['xlsx'], this); };
   $('btnExportPdf').onclick = function () { Exporter.exportReport(['pdf'], this); };
   $('btnExportBoth').onclick = function () { Exporter.exportReport(['xlsx', 'pdf'], this); };
+  $('btnExportCards').onclick = function () { Exporter.exportCards(this); };
   $('btnSummarySheet').onclick = function () { Exporter.generateSummary(this); };
 };
 
@@ -304,6 +306,8 @@ Exporter.preview = async function (button) {
     const data = await apiWithButton(button, 'apiPreviewExport', App.session.token, Exporter.payload());
     const s = data.stats;
     const weighted = !!s.weighted;
+    const setInfo = data.sets || { sets: [], converts: false, fullMarksTotal: 0, multiple: false };
+    const converts = !!setInfo.converts;
     const weightNote = (data.weights && data.weights.enabled)
       ? '<p class="card__desc">⚖️ คะแนนสุทธิคิดจากน้ำหนัก: ' +
         data.weights.rows.filter(function (r) { return r.weight > 0; })
@@ -317,11 +321,23 @@ Exporter.preview = async function (button) {
           '<span class="badge badge--ok">ประเมินแล้ว ' + s.evaluated + '</span>' +
           (s.notEvaluated ? '<span class="badge badge--warn">ยังไม่ประเมิน ' + s.notEvaluated + '</span>' : '') +
           '<span class="badge badge--muted">' + (weighted ? 'สุทธิเฉลี่ย ' : 'เฉลี่ยรวม ') + num(s.average) + '</span>' +
+          (converts
+            ? '<span class="badge badge--brand">คะแนนที่หน่วยงานได้รับรวม ' + num(s.converted) +
+              ' (เต็ม ' + num(s.fullMarks * s.selected) + ')</span>'
+            : '') +
         '</div>' + weightNote +
+        (converts
+          ? '<p class="card__desc">🧩 ชุดประเมิน: ' + setInfo.sets.map(function (st) {
+              return esc(st.name) + (st.fullMarks ? ' <b>' + num(st.fullMarks) + ' คะแนน</b>' : ' (ไม่แปลงคะแนน)');
+            }).join(' · ') + ' &nbsp;→&nbsp; รวม <b>' + num(setInfo.fullMarksTotal) + ' คะแนน</b> ต่อคน</p>'
+          : '') +
         '<div class="table-wrap scroll-y" style="max-height:460px"><table><thead><tr>' +
           '<th class="num">ลำดับ</th><th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>เวรประจำวัน</th><th>บทบาทในเวร</th>' +
           '<th class="num">รอง ผอ.</th><th class="num">หน.กิจการฯ</th><th class="num">หน.ระดับ</th><th class="num">หน.เวร</th>' +
           '<th class="num">เฉลี่ย</th>' + (weighted ? '<th class="num">คะแนนสุทธิ</th>' : '') +
+          (converts ? setInfo.sets.map(function (st) {
+            return '<th class="num">' + esc(st.name) + '<br><span class="small">เต็ม ' + num(st.fullMarks) + '</span></th>';
+          }).join('') + '<th class="num">รวมที่ได้รับ<br><span class="small">เต็ม ' + num(setInfo.fullMarksTotal) + '</span></th>' : '') +
           '<th>ระดับ</th><th class="num">ครั้ง</th></tr></thead><tbody>' +
           data.rows.map(function (r, i) {
             const dash = function (v) { return v === null || v === undefined ? '-' : num(v); };
@@ -332,6 +348,10 @@ Exporter.preview = async function (button) {
               '<td class="num">' + dash(r.headLevel) + '</td><td class="num">' + dash(r.headDuty) + '</td>' +
               '<td class="num">' + (r.count ? num(r.average) : '-') + '</td>' +
               (weighted ? '<td class="num"><b>' + (r.count ? num(r.netScore) : '-') + '</b></td>' : '') +
+              (converts ? setInfo.sets.map(function (st) {
+                const found = (r.sets || []).filter(function (x) { return x.setId === st.id; })[0];
+                return '<td class="num">' + (found && found.count ? num(found.converted) : '-') + '</td>';
+              }).join('') + '<td class="num"><b>' + (r.count ? num(r.converted) : '-') + '</b></td>' : '') +
               '<td>' + (r.count
                 ? '<span class="badge ' + ratingClass(r.finalRating || r.rating) + '">' +
                   esc(r.finalRating || r.rating) + '</span>'
@@ -345,6 +365,24 @@ Exporter.preview = async function (button) {
   }
 };
 
+/** ออกรายงานรายบุคคล — 1 คน 1 หน้า พร้อมช่องลงนาม */
+Exporter.exportCards = async function (button) {
+  if (!Exporter.selected.length) { toast('กรุณาเลือกผู้ถูกประเมินอย่างน้อย 1 คน', 'warn'); return; }
+  $('fileArea').innerHTML = '<div class="card"><div class="inline"><span class="spinner spinner--dark"></span>' +
+    '<span>กำลังสร้างรายงานรายบุคคล (หน้าละ 1 คน) อาจใช้เวลาสักครู่...</span></div></div>';
+
+  try {
+    const payload = Exporter.payload(['pdf']);
+    payload.options.orientation = 'portrait';
+    const data = await apiWithButton(button, 'apiExportTeacherCards', App.session.token, payload);
+    Exporter.renderFiles(data, 'รายงานรายบุคคล');
+    toast('ออกรายงานรายบุคคลเรียบร้อย (' + data.count + ' คน)', 'ok');
+  } catch (err) {
+    $('fileArea').innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' + esc(err.message) + '</span></div>';
+    toast(err.message, 'danger');
+  }
+};
+
 /** ส่งออกไฟล์จริง */
 Exporter.exportReport = async function (formats, button) {
   if (!Exporter.selected.length) { toast('กรุณาเลือกผู้ถูกประเมินอย่างน้อย 1 คน', 'warn'); return; }
@@ -353,29 +391,34 @@ Exporter.exportReport = async function (formats, button) {
 
   try {
     const data = await apiWithButton(button, 'apiExportReport', App.session.token, Exporter.payload(formats));
-    $('fileArea').innerHTML =
-      '<div class="card">' +
-        '<div class="card__head"><h3>✅ ไฟล์รายงานพร้อมใช้งาน</h3><div class="spacer"></div>' +
-          '<span class="badge badge--ok">' + data.count + ' คน · ' + esc(data.term) + '</span></div>' +
-        data.files.map(function (f, i) {
-          return '<div class="file-card">' +
-            '<div class="fi ' + f.format + '">' + (f.format === 'xlsx' ? '📊' : '📄') + '</div>' +
-            '<div style="flex:1;min-width:180px"><div class="fname">' + esc(f.name) + '</div>' +
-              '<div class="fmeta">' + esc(f.sizeText) + ' · บันทึกไว้ใน Google Drive โฟลเดอร์ "รายงานผลการประเมินครู"</div></div>' +
-            (f.base64 ? '<button class="btn btn--sm" onclick="Exporter.download(' + i + ')">⬇️ ดาวน์โหลด</button>' : '') +
-            '<a class="btn btn--ghost btn--sm" href="' + esc(f.url) + '" target="_blank" rel="noopener">🔗 เปิดใน Drive</a>' +
-          '</div>';
-        }).join('') +
-        '<p class="small muted">💡 หากปุ่มดาวน์โหลดไม่ทำงาน (บางเบราว์เซอร์บล็อกการดาวน์โหลดในหน้าต่างซ้อน) ' +
-        'ให้กด "เปิดใน Drive" แล้วดาวน์โหลดจากที่นั่นแทน</p>' +
-      '</div>';
-    Exporter.files = data.files;
+    Exporter.renderFiles(data, 'ไฟล์รายงาน');
     toast('ส่งออกรายงานเรียบร้อย', 'ok');
-    $('fileArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     $('fileArea').innerHTML = '<div class="alert alert--danger"><span>⚠️</span><span>' + esc(err.message) + '</span></div>';
     toast(err.message, 'danger');
   }
+};
+
+/** แสดงรายการไฟล์ที่สร้างเสร็จแล้ว */
+Exporter.renderFiles = function (data, label) {
+  $('fileArea').innerHTML =
+    '<div class="card">' +
+      '<div class="card__head"><h3>✅ ' + esc(label) + 'พร้อมใช้งาน</h3><div class="spacer"></div>' +
+        '<span class="badge badge--ok">' + data.count + ' คน · ' + esc(data.term) + '</span></div>' +
+      data.files.map(function (f, i) {
+        return '<div class="file-card">' +
+          '<div class="fi ' + f.format + '">' + (f.format === 'xlsx' ? '📊' : '📄') + '</div>' +
+          '<div style="flex:1;min-width:180px"><div class="fname">' + esc(f.name) + '</div>' +
+            '<div class="fmeta">' + esc(f.sizeText) + ' · บันทึกไว้ใน Google Drive โฟลเดอร์ "รายงานผลการประเมินครู"</div></div>' +
+          (f.base64 ? '<button class="btn btn--sm" onclick="Exporter.download(' + i + ')">⬇️ ดาวน์โหลด</button>' : '') +
+          '<a class="btn btn--ghost btn--sm" href="' + esc(f.url) + '" target="_blank" rel="noopener">🔗 เปิดใน Drive</a>' +
+        '</div>';
+      }).join('') +
+      '<p class="small muted">💡 หากปุ่มดาวน์โหลดไม่ทำงาน (บางเบราว์เซอร์บล็อกการดาวน์โหลดในหน้าต่างซ้อน) ' +
+      'ให้กด "เปิดใน Drive" แล้วดาวน์โหลดจากที่นั่นแทน</p>' +
+    '</div>';
+  Exporter.files = data.files;
+  $('fileArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
 Exporter.download = function (index) {

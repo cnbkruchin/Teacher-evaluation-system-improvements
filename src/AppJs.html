@@ -78,7 +78,7 @@ function clientId() {
 const READ_CACHE_TTL = 45000;                       // มิลลิวินาที
 const READ_PREFIXES = ['apiList', 'apiGet', 'apiAdminOverview', 'apiExportCandidates',
   'apiEvaluatorContext', 'apiEvaluatorDutyView', 'apiMyEvaluations', 'apiTeacherHistory',
-  'apiHealthCheck', 'apiTermOverview'];
+  'apiHealthCheck', 'apiTermOverview', 'apiEvaluationProgress', 'apiQualityCheck'];
 const readCache = new Map();
 
 function isReadCall(fnName) {
@@ -433,8 +433,12 @@ App.NAV = {
     { id: 'teachers', icon: '🧑‍🏫', label: 'ครูผู้รับการประเมิน' },
     { id: 'evaluators', icon: '👥', label: 'ผู้ประเมิน' },
     { id: 'duty', icon: '📅', label: 'เวรประจำวัน' },
+    { group: 'การประเมิน' },
+    { id: 'sets', icon: '🧩', label: 'ชุดประเมิน' },
     { id: 'criteria', icon: '📝', label: 'เกณฑ์การประเมิน' },
     { id: 'weights', icon: '⚖️', label: 'น้ำหนักผู้ประเมิน' },
+    { id: 'progress', icon: '📈', label: 'ติดตามความคืบหน้า' },
+    { id: 'quality', icon: '🔎', label: 'ตรวจคุณภาพการประเมิน' },
     { group: 'ระบบ' },
     { id: 'terms', icon: '📆', label: 'ปีการศึกษาและภาคเรียน' },
     { id: 'cleanup', icon: '🧹', label: 'เคลียร์ข้อมูล' },
@@ -514,7 +518,7 @@ App.go = function (pageId, options) {
   if (!renderer) { container.innerHTML = emptyState('🚧', 'ยังไม่พร้อมใช้งาน'); return; }
 
   const token = ++App.renderToken;
-  return Promise.resolve(renderer(container)).then(function () {
+  return Promise.resolve(renderer(container, opts)).then(function () {
     if (token !== App.renderToken) return;   // ผู้ใช้เปลี่ยนหน้าไปแล้ว
     App.enhanceTables();
   }).catch(function (err) {

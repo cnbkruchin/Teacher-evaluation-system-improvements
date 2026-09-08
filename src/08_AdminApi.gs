@@ -70,6 +70,8 @@ function apiAdminOverview(token, year, semester) {
       byDay: averageMap_(byDay),
       byRole: byRole,
       weights: scoreWeightInfo_(),
+      sets: reportSetInfo_(),
+      window: evaluationWindow_(y || term.year, s || term.semester),
       topTeachers: summary.slice().sort(function (a, b) { return b.final - a.final; }).slice(0, 10),
       lowTeachers: summary.slice().sort(function (a, b) { return a.final - b.final; }).slice(0, 5),
       recentLogs: readLogs_(8)
@@ -83,35 +85,6 @@ function averageMap_(map) {
     out[k] = Math.round((map[k].sum / map[k].n) * 100) / 100;
   });
   return out;
-}
-
-/** ความคืบหน้าการประเมินของผู้ประเมินแต่ละคนในภาคเรียนที่เลือก */
-function evaluationProgress_(year, semester) {
-  const evaluators = readTable_(SHEETS.EVALUATORS).rows.filter(function (r) {
-    return str_(r['ชื่อ-นามสกุล']) && str_(r['สถานะ']) !== STATUS.INACTIVE;
-  });
-
-  const doneByEvaluator = {};
-  readTable_(SHEETS.RESULTS).rows.forEach(function (r) {
-    if (str_(r['สถานะ']) === STATUS.CANCELLED) return;
-    if (str_(r['ปีการศึกษา']) !== String(year) || str_(r['ภาคเรียน']) !== String(semester)) return;
-    const name = str_(r['ผู้ประเมิน']);
-    doneByEvaluator[name] = (doneByEvaluator[name] || 0) + 1;
-  });
-
-  const allTeachers = teachersWithDuty_(year, semester, false);
-  return evaluators.map(function (r) {
-    const name = str_(r['ชื่อ-นามสกุล']);
-    const role = str_(r['บทบาท']);
-    const scope = str_(r['ขอบเขต (ระดับชั้น/วัน)']);
-    const total = teachersForEvaluator_(role, scope, year, semester, allTeachers).length;
-    const done = doneByEvaluator[name] || 0;
-    return {
-      name: name, role: role, scope: scope,
-      done: Math.min(done, total), total: total,
-      percent: total ? Math.round(Math.min(done, total) / total * 100) : 0
-    };
-  }).sort(function (a, b) { return a.percent - b.percent; });
 }
 
 // ==================== ครูผู้รับการประเมิน ====================
@@ -671,27 +644,51 @@ function apiCopyDuty(token, options) {
 
 // ==================== เกณฑ์การประเมิน ====================
 
-function apiListCriteria(token) {
+/** เกณฑ์การประเมินของชุดที่เลือก */
+function apiListCriteria(token, setId) {
   return guard_(function () {
     requireAdmin_(token);
+    const set = resolveSet_(setId);
+    const mainId = defaultSetId_();
+    const groups = loadSetGroups_(set.id);
+
     const rows = readTable_(SHEETS.CRITERIA).rows
-      .filter(function (r) { return num_(r['ข้อที่']) > 0 && str_(r['เกณฑ์การประเมิน']); })
+      .filter(function (r) {
+        if (!(num_(r['ข้อที่']) > 0) || !str_(r['เกณฑ์การประเมิน'])) return false;
+        return (str_(r['รหัสชุด']) || mainId) === set.id;
+      })
       .map(function (r) {
         const roleText = str_(r['ผู้มีสิทธิ์ประเมิน']);
         return {
           row: r._row,
           id: num_(r['ข้อที่']),
+          setId: set.id,
           name: str_(r['เกณฑ์การประเมิน']),
+          groups: resolveCriteriaGroups_(roleText, groups),
           roles: Object.keys(ROLES).filter(function (k) { return roleText.indexOf(ROLES[k]) !== -1; }),
           weight: num_(r['น้ำหนัก (%)']),
           description: str_(r['คำอธิบาย']),
           status: str_(r['สถานะ']) || STATUS.ACTIVE
         };
       });
+    rows.sort(function (a, b) { return a.id - b.id; });
+
     return ok_({
       criteria: rows,
+      setId: set.id,
+      setName: set.name,
+      scaleMax: set.scaleMax,
+      fullMarks: Number(set.fullMarks) || 0,
+      sets: activeSets_().map(function (st) {
+        return { id: st.id, name: st.name, scaleMax: st.scaleMax, fullMarks: Number(st.fullMarks) || 0 };
+      }),
+      groups: groups.map(function (g) {
+        return { key: g.key, name: g.name, type: g.type, members: g.members, weight: g.weight };
+      }),
       roles: Object.keys(ROLES).map(function (k) { return { key: k, name: ROLES[k] }; }),
-      useWeights: getSettingBool_(SETTING_KEYS.USE_WEIGHTS, 'ไม่'),
+      useWeights: !!set.useCriteriaWeights,
+      weightTotal: rows.filter(function (r) { return r.status !== STATUS.INACTIVE; })
+        .reduce(function (a, r) { return a + (Number(r.weight) || 0); }, 0),
       maxCriteria: MAX_CRITERIA
     });
   });
@@ -701,21 +698,48 @@ function apiSaveCriteria(token, item) {
   return guard_(function () {
     requireAdmin_(token);
     const d = item || {};
+    const set = resolveSet_(d.setId);
+    const mainId = defaultSetId_();
+    const groups = loadSetGroups_(set.id);
+
     const id = num_(d.id);
     if (!id || id < 1 || id > MAX_CRITERIA) return fail_('เลขข้อต้องอยู่ระหว่าง 1-' + MAX_CRITERIA);
     if (!str_(d.name)) return fail_('กรุณากรอกชื่อเกณฑ์');
-    const roles = (d.roles || []).filter(function (k) { return ROLES[k]; });
-    if (!roles.length) return fail_('กรุณาเลือกผู้มีสิทธิ์ประเมินอย่างน้อย 1 บทบาท');
+
+    // ผู้มีสิทธิ์ประเมิน: รับเป็นรหัสกลุ่มของชุด หรือรหัสบทบาทแบบเดิมก็ได้
+    let selected = (d.groups || []).map(String).filter(function (k) {
+      return groups.some(function (g) { return g.key === k; });
+    });
+    if (!selected.length && (d.roles || []).length) {
+      (d.roles || []).forEach(function (roleKey) {
+        const roleName = ROLES[roleKey];
+        if (!roleName) return;
+        groups.forEach(function (g) {
+          if (g.type === GROUP_TYPES.ROLE && g.members.indexOf(roleName) !== -1 && selected.indexOf(g.key) === -1) {
+            selected.push(g.key);
+          }
+        });
+      });
+    }
+    if (!selected.length) return fail_('กรุณาเลือกกลุ่มผู้มีสิทธิ์ประเมินอย่างน้อย 1 กลุ่ม');
+
+    const names = selected.map(function (k) {
+      const g = groups.filter(function (x) { return x.key === k; })[0];
+      return g ? g.name : k;
+    });
 
     return withLock_(function () {
       const table = readTable_(SHEETS.CRITERIA);
       let target = null;
-      table.rows.forEach(function (r) { if (num_(r['ข้อที่']) === id) target = r; });
+      table.rows.forEach(function (r) {
+        if (num_(r['ข้อที่']) === id && (str_(r['รหัสชุด']) || mainId) === set.id) target = r;
+      });
 
       const record = {
+        'รหัสชุด': set.id,
         'ข้อที่': id,
         'เกณฑ์การประเมิน': str_(d.name),
-        'ผู้มีสิทธิ์ประเมิน': roles.map(function (k) { return ROLES[k]; }).join(', '),
+        'ผู้มีสิทธิ์ประเมิน': names.join(', '),
         'น้ำหนัก (%)': num_(d.weight) || 10,
         'คำอธิบาย': str_(d.description),
         'สถานะ': str_(d.status) || STATUS.ACTIVE
@@ -723,9 +747,37 @@ function apiSaveCriteria(token, item) {
 
       if (target) updateRecord_(SHEETS.CRITERIA, target._row, record);
       else appendRecord_(SHEETS.CRITERIA, record);
+      invalidateTable_(SHEETS.CRITERIA);
 
-      logAction_('Admin', 'admin', 'บันทึกเกณฑ์การประเมิน', 'ข้อ ' + id + ': ' + record['เกณฑ์การประเมิน']);
-      return ok_(null, 'บันทึกเกณฑ์เรียบร้อย');
+      logAction_('Admin', 'admin', 'บันทึกเกณฑ์การประเมิน',
+        set.name + ' | ข้อ ' + id + ': ' + record['เกณฑ์การประเมิน']);
+      return ok_({ setId: set.id, id: id }, 'บันทึกเกณฑ์เรียบร้อย');
+    });
+  });
+}
+
+/** ลบเกณฑ์ 1 ข้อออกจากชุด (คะแนนเดิมที่บันทึกไว้แล้วยังอยู่ครบในชีทผลการประเมิน) */
+function apiDeleteCriteria(token, setId, criteriaId) {
+  return guard_(function () {
+    requireAdmin_(token);
+    const set = resolveSet_(setId);
+    const mainId = defaultSetId_();
+    const id = num_(criteriaId);
+
+    return withLock_(function () {
+      const table = readTable_(SHEETS.CRITERIA);
+      let target = null;
+      table.rows.forEach(function (r) {
+        if (num_(r['ข้อที่']) === id && (str_(r['รหัสชุด']) || mainId) === set.id) target = r;
+      });
+      if (!target) return fail_('ไม่พบเกณฑ์ข้อนี้');
+
+      const name = str_(target['เกณฑ์การประเมิน']);
+      deleteRecord_(SHEETS.CRITERIA, target._row);
+      invalidateTable_(SHEETS.CRITERIA);
+
+      logAction_('Admin', 'admin', 'ลบเกณฑ์การประเมิน', set.name + ' | ข้อ ' + id + ': ' + name);
+      return ok_(null, 'ลบเกณฑ์ข้อ ' + id + ' เรียบร้อย');
     });
   });
 }
@@ -738,6 +790,8 @@ function apiListResults(token, filters) {
     const f = filters || {};
     const keyword = str_(f.keyword).toLowerCase();
     const limit = Math.min(num_(f.limit) || 500, 3000);
+    const wantedSet = str_(f.setId);
+    const mainSetId = defaultSetId_();
 
     const rows = readTable_(SHEETS.RESULTS).rows.filter(function (r) {
       if (str_(f.year) && str_(f.year) !== 'all' && str_(r['ปีการศึกษา']) !== str_(f.year)) return false;
@@ -745,6 +799,7 @@ function apiListResults(token, filters) {
       if (str_(f.role) && str_(f.role) !== 'all' && str_(r['บทบาทผู้ประเมิน']) !== str_(f.role)) return false;
       if (str_(f.level) && str_(f.level) !== 'all' && str_(r['ระดับชั้น']) !== str_(f.level)) return false;
       if (str_(f.day) && str_(f.day) !== 'all' && str_(r['เวรประจำวัน']) !== str_(f.day)) return false;
+      if (wantedSet && wantedSet !== 'all' && (str_(r['รหัสชุด']) || mainSetId) !== wantedSet) return false;
       if (keyword) {
         const hay = (str_(r['ครูผู้รับการประเมิน']) + ' ' + str_(r['ผู้ประเมิน'])).toLowerCase();
         if (hay.indexOf(keyword) === -1) return false;
@@ -756,12 +811,15 @@ function apiListResults(token, filters) {
         savedAt: formatDate_(r['วันที่บันทึก']),
         year: str_(r['ปีการศึกษา']),
         semester: str_(r['ภาคเรียน']),
+        setId: str_(r['รหัสชุด']) || mainSetId,
+        setName: str_(r['ชุดประเมิน']),
         evaluator: str_(r['ผู้ประเมิน']),
         role: str_(r['บทบาทผู้ประเมิน']),
         teacher: str_(r['ครูผู้รับการประเมิน']),
         level: str_(r['ระดับชั้น']),
         dutyDay: str_(r['เวรประจำวัน']),
         average: num_(r['คะแนนเฉลี่ย']),
+        scaleMax: num_(r['คะแนนเต็มต่อข้อ']) || SET_DEFAULT_SCALE_MAX,
         rating: str_(r['ระดับผลการประเมิน']),
         comment: str_(r['ข้อเสนอแนะ']),
         revision: num_(r['แก้ไขครั้งที่']),
@@ -770,19 +828,26 @@ function apiListResults(token, filters) {
     });
 
     rows.sort(function (a, b) { return b.savedAt.localeCompare(a.savedAt); });
-    return ok_({ rows: rows.slice(0, limit), total: rows.length });
+    return ok_({
+      rows: rows.slice(0, limit), total: rows.length,
+      sets: activeSets_().map(function (st) { return { id: st.id, name: st.name }; })
+    });
   });
 }
 
 function apiGetResult(token, resultId) {
   return guard_(function () {
     requireAdmin_(token);
-    const criteria = loadCriteria_();
     let target = null;
     readTable_(SHEETS.RESULTS).rows.forEach(function (r) {
       if (str_(r['รหัสการประเมิน']) === str_(resultId)) target = r;
     });
     if (!target) return fail_('ไม่พบผลการประเมิน');
+
+    // อ่านเกณฑ์ของ "ชุดประเมิน" ที่ผลรายการนี้สังกัด เพื่อให้ชื่อข้อตรงกับตอนที่ประเมิน
+    const setId = str_(target['รหัสชุด']) || defaultSetId_();
+    const set = resolveSet_(setId);
+    const criteria = loadCriteria_(setId);
 
     const scores = criteria.map(function (c) {
       const v = target[CRITERIA_COL_PREFIX + c.id];
@@ -794,6 +859,9 @@ function apiGetResult(token, resultId) {
       savedAt: formatDate_(target['วันที่บันทึก']),
       year: str_(target['ปีการศึกษา']),
       semester: str_(target['ภาคเรียน']),
+      setId: setId,
+      setName: str_(target['ชุดประเมิน']) || set.name,
+      scaleMax: num_(target['คะแนนเต็มต่อข้อ']) || set.scaleMax,
       evaluator: str_(target['ผู้ประเมิน']),
       role: str_(target['บทบาทผู้ประเมิน']),
       teacher: str_(target['ครูผู้รับการประเมิน']),

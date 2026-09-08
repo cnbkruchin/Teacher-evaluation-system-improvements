@@ -648,7 +648,266 @@ check('บันทึกการนำเข้าลงประวัติ�
 check('ไฟล์ว่าง → แจ้งเตือน', apiPreviewTeacherImport(T2, csvFile(''), {}).success === false);
 check('ไม่ส่งไฟล์มา → แจ้งเตือน', apiPreviewTeacherImport(T2, null, {}).success === false);
 
-/* ---------- 18. ตรวจสุขภาพระบบ ---------- */
+/* ---------- 18. ชุดประเมิน แปลงคะแนน และรายงานรูปแบบใหม่ ---------- */
+section('ชุดประเมินและการแปลงเป็นคะแนนที่หน่วยงานได้รับ');
+
+// --- โครงสร้างพื้นฐาน ---
+check('มีชีทชุดประเมินและกลุ่มผู้ประเมิน',
+  sheetExists_(SHEETS.SETS) && sheetExists_(SHEETS.SET_GROUPS));
+const mainSet = defaultSet_();
+check('สร้างชุดประเมินหลักให้อัตโนมัติ', mainSet.id === 'SET-0001', mainSet.id);
+check('ชุดหลักใช้มาตราข้อละ 5 คะแนน', mainSet.scaleMax === 5, mainSet.scaleMax);
+check('ชุดหลักแปลงเป็น 20 คะแนนของหน่วยงาน', mainSet.fullMarks === 20, mainSet.fullMarks);
+check('ชุดหลักมีกลุ่มผู้ประเมิน 4 กลุ่มตามบทบาท',
+  loadSetGroups_(mainSet.id).length === 4, loadSetGroups_(mainSet.id).map(g => g.key));
+check('เกณฑ์เดิมถูกผูกเข้ากับชุดหลัก',
+  loadCriteria_(mainSet.id).length === 10, loadCriteria_(mainSet.id).length);
+check('เกณฑ์ทุกข้อรู้ว่าอยู่กลุ่มผู้ประเมินใดบ้าง',
+  loadCriteria_(mainSet.id).every(c => c.groups.length > 0));
+
+// --- สูตรแปลงคะแนน ---
+check('แปลงคะแนน: สุทธิ 5.00 จากเต็ม 5 → 20.00 คะแนน',
+  convertScore_(5, { scaleMax: 5, fullMarks: 20 }) === 20);
+check('แปลงคะแนน: สุทธิ 4.25 จากเต็ม 5 → 17.00 คะแนน',
+  convertScore_(4.25, { scaleMax: 5, fullMarks: 20 }) === 17);
+check('แปลงคะแนน: สุทธิ 3.00 จากเต็ม 4 → 22.50 จากเต็ม 30',
+  convertScore_(3, { scaleMax: 4, fullMarks: 30 }) === 22.5);
+check('ชุดที่ไม่กำหนดคะแนนหน่วยงาน → ไม่แปลง',
+  convertScore_(5, { scaleMax: 5, fullMarks: 0 }) === null);
+check('ระดับผลเทียบมาตราอื่นกลับเป็นมาตรา 5 ก่อนตัด',
+  ratingOf_(4, 4) === RATING_LABELS[0] && ratingOf_(2, 4) === RATING_LABELS[2],
+  [ratingOf_(4, 4), ratingOf_(2, 4)]);
+
+// --- สร้างชุดที่สอง ---
+const newSet = apiSaveSet(T2, {
+  name: 'การปฏิบัติงานกลุ่มบริหารงานวิชาการ',
+  description: 'ชุดทดสอบ',
+  scaleMax: 4, fullMarks: 30,
+  useGroupWeights: true, normalize: true, useCriteriaWeights: false,
+  order: 2, status: 'ใช้งาน'
+});
+check('สร้างชุดประเมินใหม่ได้', newSet.success === true, newSet.message);
+const SET2 = newSet.data.id;
+check('ชุดใหม่ได้รหัส SET-0002', SET2 === 'SET-0002', SET2);
+check('ชื่อชุดซ้ำ → ปฏิเสธ',
+  apiSaveSet(T2, { name: 'การปฏิบัติงานกลุ่มบริหารงานวิชาการ', scaleMax: 5, fullMarks: 10 }).success === false);
+check('คะแนนเต็มต่อข้อผิดช่วง → ปฏิเสธ',
+  apiSaveSet(T2, { name: 'ชุดผิด', scaleMax: 1, fullMarks: 10 }).success === false);
+check('ชุดใหม่ได้กลุ่มผู้ประเมินมาตรฐานมาให้', loadSetGroups_(SET2).length === 4);
+
+// --- กำหนดผู้ประเมินของชุดอย่างอิสระ ---
+const evaluatorList = apiListEvaluators(T2).data;
+const viceDir = evaluatorList.filter(e => e.role === ROLES.VICE_DIRECTOR)[0];
+const headLv1 = evaluatorList.filter(e => e.role === ROLES.HEAD_LEVEL)[0];
+
+const groupsSaved = apiSaveSetGroups(T2, SET2, [
+  { name: 'ผู้บริหาร', type: GROUP_TYPES.ROLE, members: [ROLES.VICE_DIRECTOR, ROLES.HEAD_AFFAIRS], weight: 70 },
+  { name: 'คณะกรรมการเฉพาะกิจ', type: GROUP_TYPES.PERSON, members: [headLv1.id], weight: 30 }
+]);
+check('บันทึกกลุ่มผู้ประเมินแบบกำหนดเองได้', groupsSaved.success === true, groupsSaved.message);
+check('ชุดที่ 2 มี 2 กลุ่ม', loadSetGroups_(SET2).length === 2, loadSetGroups_(SET2).length);
+check('กลุ่มแบบรายบุคคลจับคู่ผู้ประเมินได้',
+  groupOfEvaluator_(loadSetGroups_(SET2), { id: headLv1.id, name: headLv1.name, role: headLv1.role }).type === GROUP_TYPES.PERSON);
+check('กลุ่มแบบบทบาทจับคู่ผู้ประเมินได้',
+  groupOfEvaluator_(loadSetGroups_(SET2), { id: viceDir.id, name: viceDir.name, role: viceDir.role }).name === 'ผู้บริหาร');
+check('กลุ่มที่ไม่มีสมาชิก → ปฏิเสธ',
+  apiSaveSetGroups(T2, SET2, [{ name: 'ว่าง', type: GROUP_TYPES.ROLE, members: [], weight: 100 }]).success === false);
+check('น้ำหนักรวมเป็น 0 → ปฏิเสธ',
+  apiSaveSetGroups(T2, SET2, [{ name: 'ก', type: GROUP_TYPES.ROLE, members: [ROLES.VICE_DIRECTOR], weight: 0 }]).success === false);
+
+// --- เกณฑ์ของชุดที่ 2 ---
+const set2Groups = loadSetGroups_(SET2);
+[1, 2, 3].forEach(function (n) {
+  apiSaveCriteria(T2, {
+    setId: SET2, id: n, name: 'เกณฑ์วิชาการข้อ ' + n,
+    groups: set2Groups.map(g => g.key), weight: 10, status: 'ใช้งาน'
+  });
+});
+check('ชุดที่ 2 มีเกณฑ์ 3 ข้อ แยกจากชุดหลัก',
+  loadCriteria_(SET2).length === 3 && loadCriteria_(mainSet.id).length === 10,
+  [loadCriteria_(SET2).length, loadCriteria_(mainSet.id).length]);
+const critList2 = apiListCriteria(T2, SET2);
+check('หน้าเกณฑ์แสดงข้อมูลของชุดที่เลือก',
+  critList2.data.setId === SET2 && critList2.data.scaleMax === 4 && critList2.data.criteria.length === 3);
+check('ลบเกณฑ์ของชุดได้', apiDeleteCriteria(T2, SET2, 3).success === true);
+check('เหลือเกณฑ์ 2 ข้อ', loadCriteria_(SET2).length === 2, loadCriteria_(SET2).length);
+
+// --- ผู้ประเมินเห็นและบันทึกได้ตามชุด ---
+const SYEAR = '2591', SSEM = '1';
+setSettings_({ current_academic_year: SYEAR, current_semester: SSEM, academic_years: [YEAR, SYEAR].join(',') });
+apiSeedDuty(T2, SYEAR, SSEM, false);
+
+// รหัสผ่านของรอง ผอ. ถูกเปลี่ยนไปแล้วในหัวข้อความปลอดภัย จึงออกรหัสใหม่ก่อนเข้าสู่ระบบ
+const vdReset = apiResetEvaluatorPassword(T2, viceDir.id);
+check('ออกรหัสผ่านใหม่ให้ผู้ประเมินได้', vdReset.success === true, vdReset.message);
+const vdLogin = apiEvaluatorLogin(viceDir.name, vdReset.data.password);
+check('เข้าสู่ระบบผู้ประเมินเพื่อทดสอบชุดประเมิน', vdLogin.success === true, vdLogin.message);
+const VT = vdLogin.data.token;
+const ctxSet1 = apiEvaluatorContext(VT, SYEAR, SSEM, '');
+check('ผู้ประเมินเห็นชุดที่ได้รับมอบหมายทั้งหมด',
+  ctxSet1.data.sets.length === 2, ctxSet1.data.sets.map(x => x.id));
+check('ค่าเริ่มต้นเปิดที่ชุดหลัก', ctxSet1.data.setId === mainSet.id, ctxSet1.data.setId);
+check('ชุดหลักให้คะแนนข้อละ 1-5', ctxSet1.data.scaleMax === 5);
+
+const ctxSet2 = apiEvaluatorContext(VT, SYEAR, SSEM, SET2);
+check('สลับไปชุดที่ 2 ได้', ctxSet2.data.setId === SET2 && ctxSet2.data.criteria.length === 2);
+check('ชุดที่ 2 ให้คะแนนข้อละ 1-4', ctxSet2.data.scaleMax === 4);
+check('บอกกลุ่มผู้ประเมินที่ผู้ใช้สังกัด', ctxSet2.data.groupName === 'ผู้บริหาร', ctxSet2.data.groupName);
+check('ความหมายระดับคะแนนปรับตามมาตราของชุด',
+  ctxSet2.data.scoreMeaning.length === 4 && ctxSet2.data.scoreMeaning[0].score === 4);
+
+const targetTeacher = ctxSet2.data.teachers[0];
+check('ให้คะแนนเกินมาตราของชุด → ปฏิเสธ',
+  apiSubmitEvaluation(VT, {
+    year: SYEAR, semester: SSEM, setId: SET2, teacherId: targetTeacher.id,
+    scores: { 1: 5, 2: 5 }, comment: ''
+  }).success === false);
+
+const submit2 = apiSubmitEvaluation(VT, {
+  year: SYEAR, semester: SSEM, setId: SET2, teacherId: targetTeacher.id,
+  scores: { 1: 4, 2: 4 }, comment: 'ทดสอบชุดที่สอง'
+});
+check('บันทึกผลในชุดที่ 2 ได้', submit2.success === true, submit2.message);
+check('ผลบันทึกพร้อมชื่อชุด', submit2.data.setId === SET2 && submit2.data.average === 4, submit2.data);
+
+const submit1 = apiSubmitEvaluation(VT, {
+  year: SYEAR, semester: SSEM, setId: mainSet.id, teacherId: targetTeacher.id,
+  scores: (function () { const o = {}; loadCriteria_(mainSet.id).forEach(c => { o[c.id] = 5; }); return o; })(),
+  comment: 'ทดสอบชุดหลัก'
+});
+check('บันทึกผลชุดหลักของครูคนเดียวกันได้ (ไม่ทับกัน)', submit1.success === true, submit1.message);
+check('มีผล 2 รายการแยกตามชุด',
+  readTable_(SHEETS.RESULTS).rows.filter(r =>
+    str_(r['ปีการศึกษา']) === SYEAR && str_(r['รหัสครู']) === targetTeacher.id).length === 2);
+
+// --- รวมคะแนนและแปลงเป็นคะแนนที่หน่วยงานได้รับ ---
+const sumRow = buildSummaryRows_({ year: SYEAR, semester: SSEM })
+  .filter(r => r.teacherId === targetTeacher.id)[0];
+check('สรุปผลแยกคะแนนรายชุด', sumRow.sets.length === 2, sumRow.sets.map(x => x.setId));
+const s1 = sumRow.sets.filter(x => x.setId === mainSet.id)[0];
+const s2 = sumRow.sets.filter(x => x.setId === SET2)[0];
+check('ชุดหลัก: เฉลี่ย 5.00 → ได้ 20.00 จาก 20 คะแนน',
+  s1.average === 5 && s1.converted === 20 && s1.fullMarks === 20, [s1.average, s1.converted]);
+check('ชุดที่ 2: เฉลี่ย 4.00 จากเต็ม 4 → ได้ 30.00 จาก 30 คะแนน',
+  s2.average === 4 && s2.converted === 30 && s2.fullMarks === 30, [s2.average, s2.converted]);
+check('รวมคะแนนที่หน่วยงานได้รับ = 50.00 จากเต็ม 50',
+  sumRow.converted === 50 && sumRow.fullMarks === 50, [sumRow.converted, sumRow.fullMarks]);
+
+// --- รายงานรูปแบบใหม่ ---
+const exportSets = apiExportReport(T2, {
+  year: SYEAR, semester: SSEM, teacherIds: [targetTeacher.id], formats: ['xlsx'], options: {}
+});
+check('ส่งออกรายงานพร้อมคะแนนรายชุดได้', exportSets.success === true, exportSets.message);
+const setSheets = mock.store.created.slice(-1)[0].getSheets().map(x => x.getName());
+check('รายงานมีแผ่นงานคะแนนรายชุดประเมิน',
+  setSheets.indexOf('คะแนนรายชุดประเมิน') !== -1, setSheets);
+
+const cards = apiExportTeacherCards(T2, {
+  year: SYEAR, semester: SSEM, teacherIds: [targetTeacher.id], formats: ['pdf'], options: {}
+});
+check('ออกรายงานรายบุคคลได้', cards.success === true, cards.message);
+check('รายงานรายบุคคล 1 คน = 1 แผ่นงาน (1 หน้า)',
+  mock.store.created.slice(-1)[0].getSheets().length === 1,
+  mock.store.created.slice(-1)[0].getSheets().length);
+check('ไม่มีครูที่มีผล → แจ้งเตือน',
+  apiExportTeacherCards(T2, { year: '2999', semester: '1', teacherIds: [], formats: ['pdf'] }).success === false);
+
+// --- ติดตามความคืบหน้า ---
+const prog = apiEvaluationProgress(T2, SYEAR, SSEM);
+check('ติดตามความคืบหน้าได้', prog.success === true, prog.message);
+check('นับงานของผู้ประเมินแยกตามชุด',
+  prog.data.evaluators.filter(e => e.name === viceDir.name)[0].sets.length === 2);
+check('รอง ผอ. ทำไปแล้ว 2 รายการ',
+  prog.data.evaluators.filter(e => e.name === viceDir.name)[0].done === 2,
+  prog.data.evaluators.filter(e => e.name === viceDir.name)[0].done);
+check('รายงานครูที่ยังไม่ครบทุกกลุ่ม', prog.data.teachers.some(t => !t.complete));
+
+// --- ตรวจคุณภาพการประเมิน ---
+const quality = apiQualityCheck(T2, SYEAR, SSEM);
+check('ตรวจคุณภาพการประเมินได้', quality.success === true, quality.message);
+check('ตรวจพบการให้คะแนนเท่ากันทุกข้อ', quality.data.stats.flatCount >= 1, quality.data.stats);
+check('สรุปพฤติกรรมรายผู้ประเมิน', quality.data.evaluators.length >= 1);
+
+// --- รอบการประเมิน ---
+const win0 = apiGetEvaluationWindow(T2);
+check('อ่านค่ารอบการประเมินได้', win0.success === true && win0.data.open === true);
+check('รูปแบบวันที่ผิด → ปฏิเสธ',
+  apiSaveEvaluationWindow(T2, { open: true, start: '16/05/2569' }).success === false);
+check('วันเริ่มหลังวันสิ้นสุด → ปฏิเสธ',
+  apiSaveEvaluationWindow(T2, { open: true, start: '2026-09-30', end: '2026-05-16' }).success === false);
+
+check('ปิดรับผลการประเมินได้',
+  apiSaveEvaluationWindow(T2, { open: false }).success === true);
+const blocked = apiSubmitEvaluation(VT, {
+  year: SYEAR, semester: SSEM, setId: SET2, teacherId: targetTeacher.id,
+  scores: { 1: 3, 2: 3 }, comment: ''
+});
+check('ปิดรอบแล้วบันทึกไม่ได้', blocked.success === false, blocked.message);
+check('หน้าประเมินแจ้งเหตุผลที่บันทึกไม่ได้',
+  apiEvaluatorContext(VT, SYEAR, SSEM, SET2).data.window.open === false);
+
+apiSaveEvaluationWindow(T2, { open: true, lockedTerms: [termKey_(SYEAR, SSEM)] });
+check('ล็อกภาคเรียนที่สรุปผลแล้วได้', isTermLocked_(SYEAR, SSEM) === true);
+check('ภาคเรียนที่ล็อกแล้วบันทึกไม่ได้',
+  apiSubmitEvaluation(VT, {
+    year: SYEAR, semester: SSEM, setId: SET2, teacherId: targetTeacher.id,
+    scores: { 1: 3, 2: 3 }, comment: ''
+  }).success === false);
+apiSaveEvaluationWindow(T2, { open: true, lockedTerms: [] });
+check('ปลดล็อกกลับได้ และบันทึกได้อีกครั้ง',
+  apiSubmitEvaluation(VT, {
+    year: SYEAR, semester: SSEM, setId: SET2, teacherId: targetTeacher.id,
+    scores: { 1: 3, 2: 3 }, comment: ''
+  }).success === true);
+
+// --- แจ้งเตือนทางอีเมล ---
+apiSaveEvaluator(T2, {
+  id: viceDir.id, prefix: viceDir.name.substring(0, 3), firstName: 'บุญมี', lastName: 'ผู้บริหาร',
+  role: viceDir.role, scope: viceDir.scope, email: 'vice@school.ac.th', status: 'ใช้งาน'
+});
+check('บันทึกอีเมลให้ผู้ประเมินได้',
+  evaluationProgress_(SYEAR, SSEM).filter(e => e.id === viceDir.id)[0].hasEmail === true);
+
+const mailsBefore = mock.store.mails.length;
+const remind = apiSendReminders(T2, { year: SYEAR, semester: SSEM, note: 'ทดสอบ' });
+check('ส่งอีเมลแจ้งเตือนผู้ที่ค้างงานได้', remind.success === true, remind.message);
+check('มีอีเมลถูกส่งจริง', mock.store.mails.length > mailsBefore,
+  mock.store.mails.length - mailsBefore);
+check('อีเมลระบุจำนวนที่ค้าง',
+  mock.store.mails.slice(-1)[0].subject.indexOf('เหลืออีก') !== -1,
+  mock.store.mails.slice(-1)[0].subject);
+
+// --- คัดลอก / ปิดใช้ / ลบชุด ---
+const copied = apiCopySet(T2, SET2, 'สำเนาชุดวิชาการ');
+check('คัดลอกชุดพร้อมเกณฑ์และกลุ่มได้', copied.success === true, copied.message);
+const COPY = copied.data.id;
+check('สำเนาได้เกณฑ์ครบ', loadCriteria_(COPY).length === 2, loadCriteria_(COPY).length);
+check('สำเนาได้กลุ่มผู้ประเมินครบ', loadSetGroups_(COPY).length === 2);
+check('ลบชุดที่ยังไม่มีผลการประเมินได้', apiDeleteSet(T2, COPY).success === true);
+check('ลบแล้วเกณฑ์ของชุดนั้นหายไปด้วย', loadCriteria_(COPY).length === 0);
+check('ลบชุดที่มีผลการประเมินแล้วไม่ได้', apiDeleteSet(T2, SET2).success === false);
+check('ปิดใช้งานชุดได้', apiToggleSet(T2, SET2).success === true);
+check('ชุดที่ปิดไม่ปรากฏในรายการที่เปิดใช้',
+  activeSets_().filter(x => x.id === SET2).length === 0);
+apiToggleSet(T2, SET2);
+check('ปิดชุดจนเหลือชุดเดียวไม่ได้',
+  (function () {
+    apiToggleSet(T2, SET2);
+    const r = apiToggleSet(T2, mainSet.id);
+    apiToggleSet(T2, SET2);
+    return r.success === false;
+  })());
+
+const setList = apiListSets(T2);
+check('หน้าชุดประเมินแสดงข้อมูลครบ',
+  setList.success === true && setList.data.sets.length === 2 &&
+  setList.data.sets.every(x => x.groups.length > 0), setList.message);
+check('คำนวณคะแนนเต็มรวมของทุกชุด', setList.data.fullMarksTotal === 50, setList.data.fullMarksTotal);
+
+// คืนค่าภาคเรียนปัจจุบันให้การทดสอบถัดไป
+setSettings_({ current_academic_year: YEAR, current_semester: '1' });
+
+/* ---------- 19. ตรวจสุขภาพระบบ ---------- */
 section('ตรวจสุขภาพระบบ');
 const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);

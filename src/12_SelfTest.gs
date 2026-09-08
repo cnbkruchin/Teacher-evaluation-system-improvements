@@ -52,6 +52,28 @@ function runSelfTest() {
   check('ระดับ ดีมาก ถูกต้อง', ratingOf_(t.great) === RATING_LABELS[1]);
   check('ระดับ ปรับปรุง ถูกต้อง', ratingOf_(1) === RATING_LABELS[4]);
 
+  // --- ชุดประเมินและการแปลงคะแนน ---
+  const sets = loadSets_();
+  check('มีชุดประเมินอย่างน้อย 1 ชุด', sets.length > 0, sets.length + ' ชุด');
+  const mainSet = defaultSet_();
+  check('ชุดหลักมีกลุ่มผู้ประเมิน', loadSetGroups_(mainSet.id).length > 0);
+  check('เกณฑ์ผูกกับชุดหลักครบ', loadCriteria_(mainSet.id).length > 0,
+    loadCriteria_(mainSet.id).length + ' ข้อ');
+  check('แปลงคะแนน: สุทธิเต็ม → คะแนนเต็มของหน่วยงาน',
+    convertScore_(5, { scaleMax: 5, fullMarks: 20 }) === 20);
+  check('แปลงคะแนน: ครึ่งหนึ่งของมาตรา → ครึ่งหนึ่งของคะแนนหน่วยงาน',
+    convertScore_(2.5, { scaleMax: 5, fullMarks: 20 }) === 10);
+  check('ชุดที่ไม่กำหนดคะแนนหน่วยงาน → ไม่แปลง',
+    convertScore_(5, { scaleMax: 5, fullMarks: 0 }) === null);
+  check('ระดับผลของมาตราอื่นเทียบกลับเป็นมาตรา 5',
+    ratingOf_(4, 4) === RATING_LABELS[0], ratingOf_(4, 4));
+
+  // --- รอบการประเมิน ---
+  const win = evaluationWindow_(currentTerm_().year, currentTerm_().semester);
+  check('ตรวจสถานะรอบการประเมินได้', typeof win.open === 'boolean', win.reason || 'เปิดอยู่');
+  check('รูปแบบวันที่ถูกต้องอ่านได้', parseDateOnly_('2026-05-16') !== null);
+  check('รูปแบบวันที่ผิดถูกปฏิเสธ', parseDateOnly_('16/05/2569') === null);
+
   // --- สิทธิ์ตามบทบาท ---
   Object.keys(ROLES).forEach(function (key) {
     const list = criteriaForRole_(ROLES[key]);

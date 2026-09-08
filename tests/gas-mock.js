@@ -64,7 +64,7 @@ class Sheet {
   protect() { return chainable({ setDescription() { return this; }, setWarningOnly() { return this; } }); }
   getDataRange() { return this.getRange(1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
 }
-['setFrozenRows','setRowHeight','setColumnWidth','setColumnWidths','autoResizeColumns','hideColumns','setTabColor','activate','insertSheet']
+['setFrozenRows','setFrozenColumns','setRowHeight','setRowHeights','setColumnWidth','setColumnWidths','autoResizeColumns','hideColumns','showColumns','setTabColor','activate','insertSheet']
   .forEach(m => { Sheet.prototype[m] = function () { return this; }; });
 
 function makeRange(sheet, row, col, numRows, numCols) {
@@ -117,6 +117,7 @@ class Spreadsheet {
   getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id; }
   getSheetByName(n) { return this.sheets.filter(s => s.name === n)[0] || null; }
   insertSheet(n) { const s = new Sheet(n); this.sheets.push(s); return s; }
+  deleteSheet(sheet) { const i = this.sheets.indexOf(sheet); if (i !== -1) this.sheets.splice(i, 1); return this; }
   getSheets() { return this.sheets.slice(); }
   getOwner() { return { getEmail: () => 'owner@school.ac.th' }; }
   setActiveSheet(s) { return s; }
@@ -225,7 +226,11 @@ global.LockService = {
 };
 
 global.MailApp = {
-  sendEmail(to, subject, body) { store.mails.push({ to, subject, body }); }
+  // Apps Script รองรับทั้งแบบพารามิเตอร์เรียงลำดับ และแบบส่ง object ก้อนเดียว
+  sendEmail(to, subject, body) {
+    if (to && typeof to === 'object') store.mails.push({ to: to.to, subject: to.subject, body: to.body });
+    else store.mails.push({ to, subject, body });
+  }
 };
 
 global.DriveApp = {

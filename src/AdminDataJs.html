@@ -752,33 +752,63 @@ Admin.copyDuty = function () {
 
 /* ==================== เกณฑ์การประเมิน ==================== */
 
-App.pages.criteria = async function (container) {
-  const data = await api('apiListCriteria', App.session.token);
+App.pages.criteria = async function (container, opts) {
+  const wanted = (opts && opts.setId) || Admin.criteriaSetId || '';
+  const data = await api('apiListCriteria', App.session.token, wanted);
   Admin.cache.criteria = data;
+  Admin.criteriaSetId = data.setId;
+
+  const active = data.criteria.filter(function (c) { return c.status === 'ใช้งาน'; });
 
   container.innerHTML =
     '<div class="card">' +
       '<div class="card__head"><h3>📝 เกณฑ์การประเมิน</h3><div class="spacer"></div>' +
-        '<span class="badge ' + (data.useWeights ? 'badge--ok' : 'badge--muted') + '">' +
-          (data.useWeights ? 'คิดคะแนนแบบถ่วงน้ำหนัก' : 'คิดคะแนนแบบเฉลี่ยเท่ากัน') + '</span>' +
+        '<div class="field" style="margin:0;min-width:210px"><label>ชุดประเมิน</label>' +
+          '<select id="cSetPicker" onchange="Admin.changeCriteriaSet()">' +
+            optionsHtml(data.sets, data.setId, function (x) { return { value: x.id, label: x.name }; }) +
+          '</select></div>' +
         '<button class="btn" onclick="Admin.editCriteria()">➕ เพิ่มเกณฑ์</button></div>' +
-      '<p class="card__desc">แก้ไขเกณฑ์ได้โดยไม่ต้องแก้โค้ด — ผู้ประเมินจะเห็นเฉพาะข้อที่บทบาทของตนมีสิทธิ์ประเมิน ' +
-        '(รองรับสูงสุด ' + data.maxCriteria + ' ข้อ)</p>' +
-      '<div class="table-wrap"><table><thead><tr>' +
-        '<th class="num">ข้อ</th><th>เกณฑ์การประเมิน</th><th>ผู้มีสิทธิ์ประเมิน</th>' +
-        '<th class="num">น้ำหนัก</th><th>สถานะ</th><th></th></tr></thead><tbody>' +
-        data.criteria.map(function (c) {
-          return '<tr><td class="num"><b>' + c.id + '</b></td>' +
-            '<td><b>' + esc(c.name) + '</b>' + (c.description ? '<div class="small muted">' + esc(c.description) + '</div>' : '') + '</td>' +
-            '<td class="small">' + c.roles.map(function (k) {
-              const found = data.roles.filter(function (r) { return r.key === k; })[0];
-              return '<span class="badge badge--muted">' + esc(found ? found.name : k) + '</span>';
-            }).join(' ') + '</td>' +
-            '<td class="num">' + c.weight + '%</td>' +
-            '<td><span class="badge ' + (c.status === 'ใช้งาน' ? 'badge--ok' : 'badge--muted') + '">' + esc(c.status) + '</span></td>' +
-            '<td><button class="btn btn--ghost btn--sm" onclick="Admin.editCriteria(' + c.id + ')">แก้ไข</button></td></tr>';
-        }).join('') + '</tbody></table></div>' +
+
+      '<div class="alert alert--info"><span>🧩</span><span>' +
+        'ชุด <b>' + esc(data.setName) + '</b> — ให้คะแนนข้อละ 1-' + data.scaleMax + ' คะแนน' +
+        (data.fullMarks
+          ? ' และแปลงคะแนนสุทธิเป็น <b>' + num(data.fullMarks) + ' คะแนน</b> ของหน่วยงาน'
+          : ' (ยังไม่ได้กำหนดการแปลงเป็นคะแนนของหน่วยงาน)') +
+        ' &nbsp;·&nbsp; <button class="linkish" onclick="App.go(\'sets\')">จัดการชุดประเมิน</button>' +
+      '</span></div>' +
+
+      '<p class="card__desc">แก้ไขเกณฑ์ได้โดยไม่ต้องแก้โค้ด — ผู้ประเมินจะเห็นเฉพาะข้อที่กลุ่มของตนมีสิทธิ์ประเมิน ' +
+        '(รองรับสูงสุด ' + data.maxCriteria + ' ข้อต่อชุด)' +
+        (data.useWeights
+          ? ' · ชุดนี้คิดคะแนนแบบถ่วงน้ำหนักรายข้อ รวมน้ำหนัก ' + num(data.weightTotal) + '%'
+          : ' · ชุดนี้คิดคะแนนเฉลี่ยเท่ากันทุกข้อ') + '</p>' +
+
+      (data.criteria.length
+        ? '<div class="table-wrap"><table><thead><tr>' +
+          '<th class="num">ข้อ</th><th>เกณฑ์การประเมิน</th><th>กลุ่มผู้มีสิทธิ์ประเมิน</th>' +
+          '<th class="num">น้ำหนัก</th><th>สถานะ</th><th></th></tr></thead><tbody>' +
+          data.criteria.map(function (c) {
+            return '<tr><td class="num"><b>' + c.id + '</b></td>' +
+              '<td><b>' + esc(c.name) + '</b>' + (c.description ? '<div class="small muted">' + esc(c.description) + '</div>' : '') + '</td>' +
+              '<td class="small">' + c.groups.map(function (k) {
+                const found = data.groups.filter(function (g) { return g.key === k; })[0];
+                return '<span class="badge badge--muted">' + esc(found ? found.name : k) + '</span>';
+              }).join(' ') + '</td>' +
+              '<td class="num">' + c.weight + '%</td>' +
+              '<td><span class="badge ' + (c.status === 'ใช้งาน' ? 'badge--ok' : 'badge--muted') + '">' + esc(c.status) + '</span></td>' +
+              '<td><button class="btn btn--ghost btn--sm" onclick="Admin.editCriteria(' + c.id + ')">แก้ไข</button>' +
+                '<button class="btn btn--ghost btn--sm" onclick="Admin.removeCriteria(' + c.id + ')">🗑️</button></td></tr>';
+          }).join('') + '</tbody></table></div>'
+        : emptyState('📝', 'ชุดนี้ยังไม่มีเกณฑ์การประเมิน', 'กด "เพิ่มเกณฑ์" เพื่อเริ่มกำหนดข้อประเมิน')) +
+
+      '<div class="hint" style="margin-top:10px">ใช้งานอยู่ ' + active.length + ' ข้อ จากทั้งหมด ' +
+        data.criteria.length + ' ข้อ</div>' +
     '</div>';
+};
+
+Admin.changeCriteriaSet = function () {
+  Admin.criteriaSetId = $('cSetPicker').value;
+  App.go('criteria', { setId: Admin.criteriaSetId });
 };
 
 Admin.editCriteria = function (id) {
@@ -787,19 +817,20 @@ Admin.editCriteria = function (id) {
   const nextId = data.criteria.reduce(function (max, x) { return Math.max(max, x.id); }, 0) + 1;
 
   modal({
-    title: c ? '✏️ แก้ไขเกณฑ์ข้อ ' + c.id : '➕ เพิ่มเกณฑ์การประเมิน',
+    title: (c ? '✏️ แก้ไขเกณฑ์ข้อ ' + c.id : '➕ เพิ่มเกณฑ์การประเมิน') + ' — ' + data.setName,
     body:
       '<div class="field"><label>ข้อที่ *</label>' +
         '<input type="number" id="kId" min="1" max="' + data.maxCriteria + '" value="' + (c ? c.id : nextId) + '"' +
         (c ? ' readonly' : '') + '></div>' +
       '<div class="field"><label>ชื่อเกณฑ์ *</label><input type="text" id="kName" value="' + esc(c ? c.name : '') + '"></div>' +
       '<div class="field"><label>คำอธิบายเพิ่มเติม</label><input type="text" id="kDesc" value="' + esc(c ? c.description : '') + '"></div>' +
-      '<div class="field"><label>ผู้มีสิทธิ์ประเมินข้อนี้ *</label>' +
-        data.roles.map(function (r) {
-          const checked = c ? c.roles.indexOf(r.key) !== -1 : true;
-          return '<label class="checkbox"><input type="checkbox" class="kRole" value="' + esc(r.key) + '"' +
-            (checked ? ' checked' : '') + '><span>' + esc(r.name) + '</span></label>';
-        }).join('') + '</div>' +
+      '<div class="field"><label>กลุ่มผู้มีสิทธิ์ประเมินข้อนี้ *</label>' +
+        '<div class="checklist">' + data.groups.map(function (g) {
+          const checked = c ? c.groups.indexOf(g.key) !== -1 : true;
+          return '<label class="checkbox"><input type="checkbox" class="kGroup" value="' + esc(g.key) + '"' +
+            (checked ? ' checked' : '') + '><span>' + esc(g.name) +
+            '<div class="small muted">' + esc(g.members.join(', ')) + '</div></span></label>';
+        }).join('') + '</div></div>' +
       '<div class="grid grid-2">' +
         '<div class="field"><label>น้ำหนัก (%)</label><input type="number" id="kWeight" min="1" max="100" value="' + (c ? c.weight : 10) + '"></div>' +
         '<div class="field"><label>สถานะ</label><select id="kStatus">' +
@@ -808,23 +839,42 @@ Admin.editCriteria = function (id) {
     footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnSaveCriteria">💾 บันทึก</button>',
     onOpen: function (wrap, close) {
       wrap.querySelector('#btnSaveCriteria').onclick = async function () {
-        const roles = Array.prototype.slice.call(wrap.querySelectorAll('.kRole:checked')).map(function (x) { return x.value; });
+        const groups = Array.prototype.slice.call(wrap.querySelectorAll('.kGroup:checked')).map(function (x) { return x.value; });
         try {
           await apiWithButton(this, 'apiSaveCriteria', App.session.token, {
+            setId: data.setId,
             id: Number(wrap.querySelector('#kId').value),
             name: wrap.querySelector('#kName').value.trim(),
             description: wrap.querySelector('#kDesc').value.trim(),
-            roles: roles,
+            groups: groups,
             weight: Number(wrap.querySelector('#kWeight').value),
             status: wrap.querySelector('#kStatus').value
           });
           close();
           toast('บันทึกเกณฑ์เรียบร้อย', 'ok');
-          App.go('criteria');
+          App.go('criteria', { setId: data.setId });
         } catch (err) { toast(err.message, 'danger'); }
       };
     }
   });
+};
+
+Admin.removeCriteria = async function (id) {
+  const data = Admin.cache.criteria;
+  const c = data.criteria.filter(function (x) { return x.id === id; })[0];
+  if (!c) return;
+  const yes = await confirmDialog({
+    title: '🗑️ ลบเกณฑ์การประเมิน',
+    message: 'ลบข้อ ' + c.id + ' "' + c.name + '" ออกจากชุด "' + data.setName + '" ใช่หรือไม่?',
+    warning: 'คะแนนที่ผู้ประเมินบันทึกไว้แล้วยังอยู่ครบในชีทผลการประเมิน แต่จะไม่ถูกนำมาคิดในรายงานอีก',
+    confirmText: 'ลบเกณฑ์', danger: true
+  });
+  if (!yes) return;
+  try {
+    await api('apiDeleteCriteria', App.session.token, data.setId, id);
+    toast('ลบเกณฑ์เรียบร้อย', 'ok');
+    App.go('criteria', { setId: data.setId });
+  } catch (err) { toast(err.message, 'danger'); }
 };
 
 /* ==================== ตั้งค่าและความปลอดภัย ==================== */

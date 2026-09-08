@@ -3,11 +3,13 @@
    AdminScoreJs — น้ำหนักของกลุ่มผู้ประเมิน และการคิดคะแนนสุทธิ
    ============================================================ */
 
-const Weights = { data: null, values: {} };
+const Weights = { data: null, values: {}, setId: '' };
 
-App.pages.weights = async function (container) {
-  const data = await api('apiGetScoreWeights', App.session.token, '', '');
+App.pages.weights = async function (container, opts) {
+  const wanted = (opts && opts.setId) || Weights.setId || '';
+  const data = await api('apiGetScoreWeights', App.session.token, '', '', wanted);
   Weights.data = data;
+  Weights.setId = data.setId;
   Weights.values = {};
   data.rows.forEach(function (r) { Weights.values[r.key] = r.weight; });
 
@@ -24,9 +26,14 @@ App.pages.weights = async function (container) {
     '<div class="card">' +
       '<div class="card__head"><h3>⚖️ น้ำหนักของกลุ่มผู้ประเมิน</h3>' +
         '<div class="spacer"></div>' +
+        '<div class="field" style="margin:0;min-width:210px"><label>ชุดประเมิน</label>' +
+          '<select id="wSetPicker" onchange="Weights.changeSet()">' +
+            optionsHtml(data.sets, data.setId, function (x) { return { value: x.id, label: x.name }; }) +
+          '</select></div>' +
         '<span class="badge" id="wTotalBadge"></span></div>' +
       '<p class="card__desc">กำหนดว่าคะแนนจากผู้ประเมินแต่ละกลุ่มจะคิดเป็นกี่ % ของคะแนนรวม ' +
-        'ระบบจะนำไปประมวลผลเป็น "คะแนนสุทธิ" ของครูแต่ละคน</p>' +
+        'ระบบจะนำไปประมวลผลเป็น "คะแนนสุทธิ" ของครูแต่ละคนในชุด <b>' + esc(data.setName) + '</b> ' +
+        '(มาตราคะแนนข้อละ ' + data.scaleMax + ')</p>' +
 
       '<div class="switch-row"><div><div class="t">เปิดใช้การคิดคะแนนสุทธิแบบถ่วงน้ำหนัก</div>' +
         '<div class="d">ถ้าปิด ระบบจะใช้คะแนนเฉลี่ยรวมของทุกการประเมินเท่ากันหมด</div></div>' +
@@ -57,6 +64,10 @@ App.pages.weights = async function (container) {
         '<div class="d">ถ้าครูคนหนึ่งไม่ได้รับการประเมินจากบางกลุ่ม ระบบจะเฉลี่ยเฉพาะกลุ่มที่ประเมินจริง ' +
           '(แนะนำให้เปิด เพื่อไม่ให้ครูเสียเปรียบ)</div></div>' +
         '<input type="checkbox" id="wNormalize" ' + (data.normalize ? 'checked' : '') + '></div>' +
+
+      '<div class="field" style="margin-top:14px;max-width:320px"><label>คะแนนที่หน่วยงานได้รับ (แปลงจากคะแนนสุทธิ)</label>' +
+        '<input type="number" id="wFullMarks" min="0" max="1000" step="0.5" value="' + data.fullMarks + '">' +
+        '<div class="hint" id="wConvertHint"></div></div>' +
 
       '<div class="btn-row" style="margin-top:14px">' +
         '<button class="btn" id="btnSaveWeights">💾 บันทึกน้ำหนัก</button>' +
@@ -98,6 +109,9 @@ Weights.bind = function () {
     };
   });
 
+  const full = $('wFullMarks');
+  if (full) full.oninput = function () { Weights.updateTotal(); };
+
   $('btnSaveWeights').onclick = function () { Weights.save(this); };
   $('btnPreviewWeights').onclick = function () { Weights.preview(this); };
   $('btnResetWeights').onclick = function () { Weights.apply(Weights.data.defaults); };
@@ -123,6 +137,11 @@ Weights.apply = function (values) {
     if (number) number.value = Weights.values[key];
   });
   Weights.updateTotal();
+};
+
+Weights.changeSet = function () {
+  Weights.setId = $('wSetPicker').value;
+  App.go('weights', { setId: Weights.setId });
 };
 
 Weights.total = function () {
@@ -157,6 +176,17 @@ Weights.updateTotal = function () {
         'แต่แนะนำให้ปรับให้รวมเป็น 100% เพื่อให้อ่านรายงานเข้าใจง่าย';
   }
 
+  const convertHint = $('wConvertHint');
+  if (convertHint) {
+    const fullMarks = Number(($('wFullMarks') || {}).value) || 0;
+    const scale = Weights.data.scaleMax;
+    convertHint.innerHTML = fullMarks > 0
+      ? 'คะแนนสุทธิ ' + scale + '.00 → <b>' + num(fullMarks) + '</b> คะแนน &nbsp;·&nbsp; ' +
+        num(scale * 0.85) + ' → <b>' + num(scale * 0.85 / scale * fullMarks) + '</b> &nbsp;·&nbsp; ' +
+        num(scale * 0.7) + ' → <b>' + num(scale * 0.7 / scale * fullMarks) + '</b>'
+      : 'ใส่ 0 = ไม่แปลงคะแนน รายงานจะแสดงคะแนนสุทธิเต็ม ' + scale + ' ตามปกติ';
+  }
+
   const formula = $('wFormula');
   if (formula) {
     const parts = Weights.data.rows.filter(function (r) { return (Number(Weights.values[r.key]) || 0) > 0; });
@@ -174,8 +204,10 @@ Weights.updateTotal = function () {
 
 Weights.payload = function () {
   return {
+    setId: Weights.data.setId,
     enabled: $('wEnabled').checked,
     normalize: $('wNormalize').checked,
+    fullMarks: Number(($('wFullMarks') || {}).value) || 0,
     weights: Weights.values,
     year: Weights.data.year,
     semester: Weights.data.semester
@@ -207,12 +239,17 @@ Weights.preview = async function (button) {
           '<div class="spacer"></div>' +
           '<span class="badge badge--muted">เฉลี่ยเดิม ' + num(p.averageOfPlain) + '</span>' +
           '<span class="badge badge--brand">คะแนนสุทธิเฉลี่ย ' + num(p.averageOfNet) + '</span>' +
+          (p.fullMarks > 0
+            ? '<span class="badge badge--ok">คะแนนที่ได้รับเฉลี่ย ' + num(p.averageOfConverted) + '/' + num(p.fullMarks) + '</span>'
+            : '') +
         '</div>' +
         '<p class="card__desc">เทียบคะแนนและอันดับก่อน-หลังใช้การถ่วงน้ำหนัก จากข้อมูล ' +
           esc(semesterLabel(p.semester) + '/' + p.year) + '</p>' +
         '<div class="table-wrap scroll-y" style="max-height:440px"><table><thead><tr>' +
           '<th class="num">อันดับ</th><th>ชื่อ-นามสกุล</th><th class="num">เฉลี่ยเดิม</th>' +
-          '<th class="num">คะแนนสุทธิ</th><th class="num">ต่าง</th><th>ระดับใหม่</th><th class="num">อันดับเปลี่ยน</th>' +
+          '<th class="num">คะแนนสุทธิ</th><th class="num">ต่าง</th>' +
+          (p.fullMarks > 0 ? '<th class="num">คะแนนที่ได้รับ<br><span class="small">(เต็ม ' + num(p.fullMarks) + ')</span></th>' : '') +
+          '<th>ระดับใหม่</th><th class="num">อันดับเปลี่ยน</th>' +
         '</tr></thead><tbody>' +
           p.rows.map(function (r) {
             const diffColor = r.diff > 0 ? 'var(--ok)' : (r.diff < 0 ? 'var(--danger)' : 'var(--text-3)');
@@ -224,6 +261,7 @@ Weights.preview = async function (button) {
               '<td class="num">' + num(r.average) + '</td>' +
               '<td class="num"><b>' + num(r.netScore) + '</b></td>' +
               '<td class="num" style="color:' + diffColor + '">' + (r.diff > 0 ? '+' : '') + num(r.diff) + '</td>' +
+              (p.fullMarks > 0 ? '<td class="num"><b>' + num(r.converted) + '</b></td>' : '') +
               '<td><span class="badge ' + ratingClass(r.netRating) + '">' + esc(r.netRating) + '</span></td>' +
               '<td class="num" style="color:' + moveColor + '">' + move + '</td></tr>';
           }).join('') +

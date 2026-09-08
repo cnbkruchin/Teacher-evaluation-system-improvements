@@ -1,0 +1,289 @@
+<script>
+/* ============================================================
+   AdminOpsJs — บริหารรอบการประเมิน
+     • ติดตามความคืบหน้า + แจ้งเตือนผู้ประเมินทางอีเมล
+     • ตรวจคุณภาพการประเมินก่อนสรุปผล
+     • เปิด/ปิดรอบการประเมิน และล็อกภาคเรียนที่สรุปแล้ว
+   ============================================================ */
+
+const Ops = { progress: null, quality: null, windowData: null };
+
+/* ==================== ติดตามความคืบหน้า ==================== */
+
+App.pages.progress = async function (container) {
+  const data = await api('apiEvaluationProgress', App.session.token,
+    Ops.year || '', Ops.semester || '');
+  Ops.progress = data;
+  Ops.year = data.year; Ops.semester = data.semester;
+
+  const s = data.stats;
+  const pending = data.evaluators.filter(function (e) { return e.total > 0 && e.done < e.total; });
+
+  container.innerHTML =
+    (data.window.open
+      ? '<div class="alert alert--ok"><span>🟢</span><span><b>รอบการประเมินเปิดอยู่</b>' +
+        (data.window.end ? ' — สิ้นสุดวันที่ ' + esc(data.window.end) : '') + '</span></div>'
+      : '<div class="alert alert--warn"><span>🔒</span><span><b>ปิดรับผลการประเมิน</b> — ' +
+        esc(data.window.reason) + '</span></div>') +
+
+    '<div class="card"><div class="card__head"><h3>📈 ความคืบหน้าการประเมิน</h3><div class="spacer"></div>' +
+      '<div class="filters">' + termFilterHtml(data, 'Ops.changeTerm()') + '</div></div>' +
+
+      '<div class="grid grid-4">' +
+        Ops.stat('✅', 'บันทึกแล้ว', s.done + ' / ' + s.total, s.percent + '% ของงานทั้งหมด') +
+        Ops.stat('👥', 'ผู้ประเมินที่ทำครบ', s.evaluatorsDone + ' คน', 'ค้างอยู่ ' + s.evaluatorsPending + ' คน', 'c2') +
+        Ops.stat('🧑‍🏫', 'ครูที่ได้รับการประเมินครบ', s.teachersComplete + ' / ' + s.teachersTotal, 'ครบทุกกลุ่มผู้ประเมิน', 'c4') +
+        Ops.stat('✉️', 'ยังไม่มีอีเมล', s.evaluatorsNoEmail + ' คน', 'ส่งแจ้งเตือนไม่ได้', 'c3') +
+      '</div>' +
+
+      '<div class="progress" style="margin-top:14px"><div style="width:' + s.percent + '%"></div></div>' +
+
+      '<div class="btn-row" style="margin-top:14px">' +
+        '<button class="btn" id="btnRemind"' + (pending.length ? '' : ' disabled') + '>' +
+          '✉️ แจ้งเตือนผู้ประเมินที่ค้าง (' + pending.length + ' คน)</button>' +
+        '<button class="btn btn--soft" onclick="Ops.editWindow()">⏱️ ตั้งค่ารอบการประเมิน</button>' +
+        '<button class="btn btn--ghost" onclick="App.go(\'quality\')">🔎 ตรวจคุณภาพการประเมิน</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>👤 รายผู้ประเมิน</h3></div>' +
+      '<div class="table-wrap"><table><thead><tr>' +
+        '<th>ผู้ประเมิน</th><th>บทบาท</th><th>ชุดประเมิน</th>' +
+        '<th class="num">ทำแล้ว</th><th style="min-width:140px">ความคืบหน้า</th><th>อีเมล</th>' +
+      '</tr></thead><tbody>' +
+        data.evaluators.map(function (e) {
+          return '<tr><td><b>' + esc(e.name) + '</b></td>' +
+            '<td class="small">' + esc(e.role) + (e.scope ? '<div class="small muted">' + esc(e.scope) + '</div>' : '') + '</td>' +
+            '<td class="small">' + (e.sets.length
+              ? e.sets.map(function (x) {
+                  return '<div>' + esc(x.setName) + ' <span class="badge ' +
+                    (x.remaining ? 'badge--warn' : 'badge--ok') + '">' + x.done + '/' + x.total + '</span></div>';
+                }).join('')
+              : '<span class="muted">ยังไม่ได้รับมอบหมาย</span>') + '</td>' +
+            '<td class="num">' + e.done + ' / ' + e.total + '</td>' +
+            '<td><div class="progress"><div style="width:' + e.percent + '%"></div></div>' +
+              '<span class="small muted">' + e.percent + '%</span></td>' +
+            '<td class="small">' + (e.hasEmail
+              ? '<span class="badge badge--ok">มี</span>'
+              : '<span class="badge badge--warn">ยังไม่มี</span>') + '</td></tr>';
+        }).join('') +
+      '</tbody></table></div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>🧑‍🏫 ความครบถ้วนรายครู</h3>' +
+      '<div class="spacer"></div><span class="badge badge--muted">แสดงเฉพาะครูที่ยังไม่ครบ</span></div>' +
+      (function () {
+        const rows = data.teachers.filter(function (t) { return !t.complete; });
+        if (!rows.length) return '<div class="alert alert--ok"><span>🎉</span><span>ครูทุกคนได้รับการประเมินครบทุกกลุ่มแล้ว</span></div>';
+        return '<div class="table-wrap"><table><thead><tr>' +
+          '<th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th class="num">ครั้งที่ถูกประเมิน</th>' +
+          '<th>ยังขาดการประเมินจาก</th><th class="num">คะแนนที่ได้รับ</th></tr></thead><tbody>' +
+          rows.map(function (t) {
+            const missing = [];
+            t.sets.forEach(function (st) {
+              if (!st.count) missing.push(st.setName + ': ยังไม่มีการประเมินเลย');
+              else if (st.missing.length) missing.push(st.setName + ': ' + st.missing.join(', '));
+            });
+            return '<tr><td><b>' + esc(t.name) + '</b></td>' +
+              '<td>' + esc(t.level || '-') + '</td>' +
+              '<td class="num">' + t.count + '</td>' +
+              '<td class="small">' + (missing.length
+                ? missing.map(function (m) { return '<div>⚠️ ' + esc(m) + '</div>'; }).join('')
+                : '<span class="muted">—</span>') + '</td>' +
+              '<td class="num">' + num(t.converted) + (t.fullMarks ? ' / ' + num(t.fullMarks) : '') + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+      })() +
+    '</div>';
+
+  const btn = $('btnRemind');
+  if (btn) btn.onclick = function () { Ops.remind(pending); };
+};
+
+Ops.stat = function (icon, label, value, hint, tone) {
+  return '<div class="stat ' + (tone || '') + '">' +
+    '<div class="label">' + icon + ' ' + esc(label) + '</div>' +
+    '<div class="value">' + esc(value) + '</div>' +
+    '<div class="hint">' + esc(hint || '') + '</div></div>';
+};
+
+Ops.changeTerm = function () {
+  Ops.year = $('fYear').value;
+  Ops.semester = $('fSemester').value;
+  App.go('progress');
+};
+
+/* ---------- แจ้งเตือนทางอีเมล ---------- */
+
+Ops.remind = function (pending) {
+  const withEmail = pending.filter(function (e) { return e.hasEmail; });
+  const without = pending.filter(function (e) { return !e.hasEmail; });
+
+  modal({
+    title: '✉️ แจ้งเตือนผู้ประเมินที่ยังทำไม่ครบ',
+    wide: true,
+    body:
+      '<p class="card__desc">ระบบจะส่งอีเมลแจ้งความคืบหน้าและรายการที่ยังค้าง ' +
+        'พร้อมลิงก์เข้าสู่ระบบ ให้เฉพาะผู้ประเมินที่เลือกไว้</p>' +
+      (without.length
+        ? '<div class="alert alert--warn"><span>⚠️</span><span>ผู้ประเมิน ' + without.length +
+          ' คนยังไม่ได้บันทึกอีเมล จึงส่งแจ้งเตือนไม่ได้: ' +
+          esc(without.map(function (e) { return e.name; }).join(', ')) + '</span></div>'
+        : '') +
+      '<div class="field"><label>เลือกผู้รับ</label>' +
+        '<div class="checklist scroll-y" style="max-height:260px">' + withEmail.map(function (e) {
+          return '<label class="checkbox"><input type="checkbox" class="remTarget" value="' + esc(e.id || e.name) + '" checked>' +
+            '<span>' + esc(e.name) + ' — เหลืออีก ' + e.remaining + ' รายการ ' +
+            '<span class="small muted">(' + esc(e.email) + ')</span></span></label>';
+        }).join('') + '</div></div>' +
+      '<div class="field"><label>ข้อความเพิ่มเติม (ไม่บังคับ)</label>' +
+        '<textarea id="remNote" rows="3" placeholder="เช่น ขอความร่วมมือบันทึกผลให้แล้วเสร็จภายในวันศุกร์นี้"></textarea></div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button>' +
+      '<button class="btn" id="btnSendRemind">✉️ ส่งอีเมลแจ้งเตือน</button>',
+    onOpen: function (wrap, close) {
+      wrap.querySelector('#btnSendRemind').onclick = async function () {
+        const ids = Array.prototype.slice.call(wrap.querySelectorAll('.remTarget:checked'))
+          .map(function (x) { return x.value; });
+        if (!ids.length) { toast('กรุณาเลือกผู้รับอย่างน้อย 1 คน', 'warn'); return; }
+        try {
+          const res = await apiWithButton(this, 'apiSendReminders', App.session.token, {
+            year: Ops.year, semester: Ops.semester,
+            evaluatorIds: ids,
+            note: wrap.querySelector('#remNote').value.trim()
+          });
+          close();
+          toast('ส่งอีเมลแจ้งเตือนแล้ว ' + res.sent.length + ' คน', 'ok', 7000);
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+/* ---------- รอบการประเมิน ---------- */
+
+Ops.editWindow = async function () {
+  const data = await api('apiGetEvaluationWindow', App.session.token);
+  Ops.windowData = data;
+
+  modal({
+    title: '⏱️ รอบการประเมิน',
+    wide: true,
+    body:
+      '<div class="switch-row"><div><div class="t">เปิดให้ผู้ประเมินบันทึกผล</div>' +
+        '<div class="d">ปิดเมื่อสรุปผลแล้ว เพื่อไม่ให้มีการแก้ไขเพิ่ม</div></div>' +
+        '<input type="checkbox" id="ewOpen" ' + (data.open ? 'checked' : '') + '></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="field"><label>เปิดให้ประเมินตั้งแต่</label>' +
+          '<input type="date" id="ewStart" value="' + esc(data.start) + '">' +
+          '<div class="hint">เว้นว่าง = ไม่จำกัด</div></div>' +
+        '<div class="field"><label>ถึงวันที่</label>' +
+          '<input type="date" id="ewEnd" value="' + esc(data.end) + '">' +
+          '<div class="hint">เลยกำหนดแล้วระบบจะไม่รับผลเพิ่ม</div></div>' +
+      '</div>' +
+      '<div class="field"><label>ล็อกภาคเรียนที่สรุปผลแล้ว</label>' +
+        '<p class="small muted">ภาคเรียนที่ติ๊กไว้จะไม่รับการบันทึก/แก้ไขผลอีก (ข้อมูลเดิมยังอ่านและออกรายงานได้ตามปกติ)</p>' +
+        '<div class="checklist scroll-y" style="max-height:260px">' + data.terms.map(function (t) {
+          return '<label class="checkbox"><input type="checkbox" class="ewTerm" value="' + esc(t.key) + '"' +
+            (t.locked ? ' checked' : '') + '><span>' + esc(t.label) +
+            (t.current ? ' <span class="badge badge--brand">ภาคเรียนปัจจุบัน</span>' : '') + '</span></label>';
+        }).join('') + '</div></div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button>' +
+      '<button class="btn" id="btnSaveWindow">💾 บันทึก</button>',
+    onOpen: function (wrap, close) {
+      wrap.querySelector('#btnSaveWindow').onclick = async function () {
+        try {
+          await apiWithButton(this, 'apiSaveEvaluationWindow', App.session.token, {
+            open: wrap.querySelector('#ewOpen').checked,
+            start: wrap.querySelector('#ewStart').value,
+            end: wrap.querySelector('#ewEnd').value,
+            lockedTerms: Array.prototype.slice.call(wrap.querySelectorAll('.ewTerm:checked'))
+              .map(function (x) { return x.value; })
+          });
+          close();
+          toast('บันทึกรอบการประเมินเรียบร้อย', 'ok');
+          App.go('progress');
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+/* ==================== ตรวจคุณภาพการประเมิน ==================== */
+
+App.pages.quality = async function (container) {
+  const data = await api('apiQualityCheck', App.session.token, Ops.year || '', Ops.semester || '');
+  Ops.quality = data;
+  Ops.year = data.year; Ops.semester = data.semester;
+  const s = data.stats;
+
+  container.innerHTML =
+    '<div class="alert alert--info"><span>🔎</span><span>' +
+      'ตรวจหาสัญญาณที่มักทำให้ผลการประเมินไม่สะท้อนความจริง ก่อนนำไปสรุปคะแนน ' +
+      '<b>ไม่ได้ตัดสินว่าผิด</b> แต่ช่วยให้ผู้ดูแลทบทวนกับผู้ประเมินได้ตรงจุด</span></div>' +
+
+    '<div class="card"><div class="card__head"><h3>📊 ภาพรวมคุณภาพ</h3><div class="spacer"></div>' +
+      '<div class="filters">' + termFilterHtml(data, 'Ops.changeQualityTerm()') + '</div></div>' +
+      '<div class="grid grid-4">' +
+        Ops.stat('📋', 'ผลการประเมินทั้งหมด', data.totalEvaluations, 'เฉลี่ยรวม ' + num(data.overallAverage)) +
+        Ops.stat('📏', 'ให้คะแนนเท่ากันทุกข้อ', s.flatCount, s.flatPercent + '% ของทั้งหมด', 'c3') +
+        Ops.stat('💬', 'ไม่มีข้อเสนอแนะ', s.noCommentCount, s.noCommentPercent + '% ของทั้งหมด', 'c4') +
+        Ops.stat('⚠️', 'ผู้ประเมินที่ควรทบทวน', s.flaggedEvaluators + ' คน', '', 'c5') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>👤 พฤติกรรมการให้คะแนนรายผู้ประเมิน</h3></div>' +
+      '<p class="card__desc">"ส่วนต่าง" คือคะแนนเฉลี่ยของผู้ประเมินคนนั้นเทียบกับค่าเฉลี่ยของทั้งระบบ ' +
+        '· "การกระจาย" คือส่วนเบี่ยงเบนมาตรฐาน ยิ่งใกล้ 0 แปลว่าให้คะแนนครูทุกคนเกือบเท่ากัน</p>' +
+      '<div class="table-wrap"><table><thead><tr>' +
+        '<th>ผู้ประเมิน</th><th class="num">จำนวน</th><th class="num">เฉลี่ย</th>' +
+        '<th class="num">ส่วนต่าง</th><th class="num">การกระจาย</th><th class="num">เขียนข้อเสนอแนะ</th><th>ข้อสังเกต</th>' +
+      '</tr></thead><tbody>' +
+        (data.evaluators.length ? data.evaluators.map(function (e) {
+          const color = e.bias > 0 ? 'var(--ok)' : (e.bias < 0 ? 'var(--danger)' : 'var(--text-3)');
+          return '<tr><td><b>' + esc(e.name) + '</b><div class="small muted">' + esc(e.role) + '</div></td>' +
+            '<td class="num">' + e.count + '</td>' +
+            '<td class="num">' + num(e.average) + '</td>' +
+            '<td class="num" style="color:' + color + '">' + (e.bias > 0 ? '+' : '') + num(e.bias) + '</td>' +
+            '<td class="num">' + num(e.spread) + '</td>' +
+            '<td class="num">' + e.commentRate + '%</td>' +
+            '<td class="small">' + (e.flags.length
+              ? e.flags.map(function (f) { return '<div class="badge badge--warn">' + esc(f) + '</div>'; }).join(' ')
+              : '<span class="badge badge--ok">ปกติ</span>') + '</td></tr>';
+        }).join('') : '<tr><td colspan="7">' + emptyState('📭', 'ยังไม่มีผลการประเมินในภาคเรียนนี้') + '</td></tr>') +
+      '</tbody></table></div>' +
+    '</div>' +
+
+    (data.flat.length
+      ? '<div class="card"><div class="card__head"><h3>📏 รายการที่ให้คะแนนเท่ากันทุกข้อ</h3>' +
+          '<div class="spacer"></div><span class="badge badge--warn">' + data.flat.length + ' รายการ</span></div>' +
+        '<p class="card__desc">อาจเป็นการให้คะแนนตามความรู้สึกรวม มากกว่าการพิจารณาแยกรายข้อ</p>' +
+        '<div class="table-wrap scroll-y" style="max-height:320px"><table><thead><tr>' +
+          '<th>ผู้ประเมิน</th><th>ครูผู้รับการประเมิน</th><th>ชุดประเมิน</th><th class="num">คะแนนที่ให้</th><th>วันที่</th>' +
+        '</tr></thead><tbody>' + data.flat.map(function (f) {
+          return '<tr><td>' + esc(f.evaluator) + '</td><td>' + esc(f.teacher) + '</td>' +
+            '<td class="small">' + esc(f.setName || '-') + '</td>' +
+            '<td class="num">' + f.score + ' ทุกข้อ</td><td class="small">' + esc(f.savedAt) + '</td></tr>';
+        }).join('') + '</tbody></table></div></div>'
+      : '') +
+
+    (data.incomplete.length
+      ? '<div class="card"><div class="card__head"><h3>🧩 ครูที่ยังขาดการประเมินจากกลุ่มที่มีน้ำหนัก</h3>' +
+          '<div class="spacer"></div><span class="badge badge--warn">' + data.incomplete.length + ' รายการ</span></div>' +
+        '<p class="card__desc">คะแนนสุทธิของครูเหล่านี้คิดจากกลุ่มที่ประเมินจริงเท่านั้น ควรติดตามให้ครบก่อนสรุปผล</p>' +
+        '<div class="table-wrap scroll-y" style="max-height:320px"><table><thead><tr>' +
+          '<th>ชื่อ-นามสกุล</th><th>ระดับชั้น</th><th>ชุดประเมิน</th><th>ยังขาดจาก</th>' +
+        '</tr></thead><tbody>' + data.incomplete.map(function (t) {
+          return '<tr><td><b>' + esc(t.name) + '</b></td><td>' + esc(t.level || '-') + '</td>' +
+            '<td class="small">' + esc(t.setName) + '</td>' +
+            '<td class="small">' + t.missing.map(function (m) {
+              return '<span class="badge badge--warn">' + esc(m) + '</span>';
+            }).join(' ') + '</td></tr>';
+        }).join('') + '</tbody></table></div></div>'
+      : '<div class="alert alert--ok"><span>✅</span><span>ครูทุกคนได้รับการประเมินครบทุกกลุ่มที่มีน้ำหนักแล้ว</span></div>');
+};
+
+Ops.changeQualityTerm = function () {
+  Ops.year = $('fYear').value;
+  Ops.semester = $('fSemester').value;
+  App.go('quality');
+};
+</script>

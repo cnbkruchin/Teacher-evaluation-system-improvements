@@ -1,0 +1,327 @@
+<script>
+/* ============================================================
+   AdminSetsJs — ชุดประเมิน (เกณฑ์ + มาตราคะแนน + ผู้ประเมินของแต่ละชุด)
+   ============================================================ */
+
+const Sets = { data: null };
+
+App.pages.sets = async function (container) {
+  const data = await api('apiListSets', App.session.token);
+  Sets.data = data;
+
+  const active = data.sets.filter(function (s) { return s.status === 'ใช้งาน'; });
+
+  container.innerHTML =
+    '<div class="alert alert--info"><span>🧩</span><span>' +
+      '<b>ชุดประเมิน</b> คือกล่องที่บรรจุเกณฑ์ มาตราคะแนน และกลุ่มผู้ประเมินของตัวเอง ' +
+      'แต่ละชุดคิดคะแนนแยกกัน แล้วแปลงเป็น "คะแนนที่หน่วยงานได้รับ" ตามที่กำหนด ' +
+      'เช่น คะแนนสุทธิเต็ม 5.00 แปลงเป็น 20 คะแนนของกลุ่มบริหารงานกิจการนักเรียน' +
+    '</span></div>' +
+
+    '<div class="card"><div class="card__head"><h3>🧩 ชุดประเมินทั้งหมด</h3><div class="spacer"></div>' +
+      '<span class="badge badge--brand">คะแนนเต็มรวม ' + num(data.fullMarksTotal) + ' คะแนน</span>' +
+      '<span class="badge badge--muted">' + active.length + '/' + data.maxSets + ' ชุด</span>' +
+      '<button class="btn" onclick="Sets.edit()">➕ สร้างชุดประเมิน</button></div>' +
+      '<p class="card__desc">คลิกที่ชุดเพื่อจัดการเกณฑ์ กลุ่มผู้ประเมิน และการแปลงคะแนน</p>' +
+      '<div class="set-grid">' + data.sets.map(Sets.cardHtml).join('') + '</div>' +
+    '</div>' +
+
+    '<div class="card"><div class="card__head"><h3>🧮 สูตรที่ระบบใช้</h3></div>' +
+      '<div class="formula">' +
+        '<span class="term">คะแนนเฉลี่ยของกลุ่ม</span> → ' +
+        '<span class="term">คะแนนสุทธิ = Σ(เฉลี่ยกลุ่ม × น้ำหนักกลุ่ม) ÷ Σน้ำหนักที่ใช้จริง</span> → ' +
+        '<span class="term">คะแนนที่หน่วยงานได้รับ = คะแนนสุทธิ ÷ คะแนนเต็มต่อข้อ × คะแนนเต็มของหน่วยงาน</span>' +
+      '</div>' +
+      '<p class="small muted" style="margin-top:10px">ตัวอย่าง ชุดหนึ่งใช้มาตราข้อละ 5 คะแนน และหน่วยงานกำหนดให้ 20 คะแนน<br>' +
+        'ครูได้คะแนนสุทธิ 5.00 → <b>20.00</b> คะแนน &nbsp;·&nbsp; ได้ 4.25 → <b>17.00</b> คะแนน &nbsp;·&nbsp; ได้ 3.50 → <b>14.00</b> คะแนน</p>' +
+    '</div>';
+};
+
+Sets.cardHtml = function (s) {
+  const inactive = s.status !== 'ใช้งาน';
+  return '<div class="set-card' + (inactive ? ' set-card--off' : '') + '">' +
+    '<div class="set-card__head">' +
+      '<div><div class="set-card__title">' + esc(s.name) +
+        (s.isMain ? ' <span class="badge badge--brand">ชุดหลัก</span>' : '') + '</div>' +
+        '<div class="small muted">' + esc(s.id) + (s.description ? ' · ' + esc(s.description) : '') + '</div></div>' +
+      '<span class="badge ' + (inactive ? 'badge--muted' : 'badge--ok') + '">' + esc(s.status) + '</span>' +
+    '</div>' +
+    '<div class="set-card__stats">' +
+      '<div><b>' + s.criteriaCount + '</b><span>เกณฑ์</span></div>' +
+      '<div><b>' + s.groups.length + '</b><span>กลุ่มผู้ประเมิน</span></div>' +
+      '<div><b>' + s.scaleMax + '</b><span>เต็มต่อข้อ</span></div>' +
+      '<div><b>' + (s.fullMarks ? num(s.fullMarks) : '—') + '</b><span>คะแนนหน่วยงาน</span></div>' +
+      '<div><b>' + s.resultCount + '</b><span>ผลที่บันทึกแล้ว</span></div>' +
+    '</div>' +
+    '<div class="set-card__groups">' +
+      s.groups.map(function (g) {
+        return '<span class="badge badge--muted" title="' + esc(g.members.join(', ')) + '">' +
+          esc(g.name) + ' ' + num(g.weight) + '%' +
+          (g.evaluatorCount ? ' · ' + g.evaluatorCount + ' คน' : '') + '</span>';
+      }).join(' ') +
+      (Math.round(s.weightTotal) !== 100
+        ? '<div class="small" style="color:var(--warn);margin-top:6px">⚠️ น้ำหนักรวม ' + num(s.weightTotal) + '% (ระบบจะเทียบสัดส่วนให้อัตโนมัติ)</div>'
+        : '') +
+      (s.useGroupWeights ? '' : '<div class="small muted" style="margin-top:6px">ยังไม่เปิดถ่วงน้ำหนัก — ใช้คะแนนเฉลี่ยรวม</div>') +
+    '</div>' +
+    '<div class="btn-row">' +
+      '<button class="btn btn--sm" onclick="Sets.edit(\'' + jsAttr(s.id) + '\')">✏️ แก้ไข</button>' +
+      '<button class="btn btn--soft btn--sm" onclick="Sets.editGroups(\'' + jsAttr(s.id) + '\')">👥 ผู้ประเมิน</button>' +
+      '<button class="btn btn--soft btn--sm" onclick="App.go(\'criteria\',{setId:\'' + jsAttr(s.id) + '\'})">📝 เกณฑ์</button>' +
+      '<button class="btn btn--ghost btn--sm" onclick="Sets.copy(\'' + jsAttr(s.id) + '\')">📋 คัดลอก</button>' +
+      '<button class="btn btn--ghost btn--sm" onclick="Sets.toggle(\'' + jsAttr(s.id) + '\')">' +
+        (inactive ? '✅ เปิดใช้' : '⏸️ ปิดใช้') + '</button>' +
+      (s.resultCount === 0
+        ? '<button class="btn btn--danger btn--sm" onclick="Sets.remove(\'' + jsAttr(s.id) + '\')">🗑️ ลบ</button>'
+        : '') +
+    '</div>' +
+  '</div>';
+};
+
+/* ---------- สร้าง / แก้ไขชุด ---------- */
+
+Sets.edit = function (id) {
+  const data = Sets.data;
+  const s = id ? data.sets.filter(function (x) { return x.id === id; })[0] : null;
+
+  modal({
+    title: s ? '✏️ แก้ไขชุดประเมิน' : '➕ สร้างชุดประเมิน',
+    body:
+      '<div class="field"><label>ชื่อชุดประเมิน *</label>' +
+        '<input type="text" id="stName" value="' + esc(s ? s.name : '') + '" ' +
+        'placeholder="เช่น การปฏิบัติงานกลุ่มบริหารงานกิจการนักเรียน"></div>' +
+      '<div class="field"><label>คำอธิบาย</label>' +
+        '<input type="text" id="stDesc" value="' + esc(s ? s.description : '') + '"></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="field"><label>คะแนนเต็มต่อข้อ *</label>' +
+          '<input type="number" id="stScale" min="2" max="100" value="' + (s ? s.scaleMax : 5) + '">' +
+          '<div class="hint">มาตราที่ผู้ประเมินให้คะแนนในแต่ละข้อ (ปกติ 5)</div></div>' +
+        '<div class="field"><label>คะแนนที่หน่วยงานได้รับ</label>' +
+          '<input type="number" id="stFull" min="0" max="1000" step="0.5" value="' + (s ? s.fullMarks : 20) + '">' +
+          '<div class="hint">คะแนนเต็มที่จะแปลงไปใช้จริง (0 = ไม่แปลง)</div></div>' +
+      '</div>' +
+      '<div class="alert alert--info" id="stPreview"><span>🧮</span><span></span></div>' +
+      '<div class="switch-row"><div><div class="t">ถ่วงน้ำหนักกลุ่มผู้ประเมิน</div>' +
+        '<div class="d">คิดคะแนนสุทธิจากน้ำหนัก % ของแต่ละกลุ่ม</div></div>' +
+        '<input type="checkbox" id="stGroupW" ' + (s && s.useGroupWeights ? 'checked' : '') + '></div>' +
+      '<div class="switch-row"><div><div class="t">ปรับสัดส่วนอัตโนมัติ</div>' +
+        '<div class="d">ครูที่ขาดการประเมินจากบางกลุ่มจะไม่เสียเปรียบ</div></div>' +
+        '<input type="checkbox" id="stNorm" ' + (!s || s.normalize ? 'checked' : '') + '></div>' +
+      '<div class="switch-row"><div><div class="t">ถ่วงน้ำหนักรายข้อ</div>' +
+        '<div class="d">ใช้คอลัมน์ "น้ำหนัก (%)" ของเกณฑ์แต่ละข้อ</div></div>' +
+        '<input type="checkbox" id="stCritW" ' + (s && s.useCriteriaWeights ? 'checked' : '') + '></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="field"><label>ลำดับการแสดง</label>' +
+          '<input type="number" id="stOrder" min="1" max="99" value="' + (s ? s.order : (data.sets.length + 1)) + '"></div>' +
+        '<div class="field"><label>สถานะ</label><select id="stStatus">' +
+          optionsHtml(['ใช้งาน', 'ไม่ใช้งาน'], s ? s.status : 'ใช้งาน') + '</select></div>' +
+      '</div>' +
+      '<div class="field"><label>หมายเหตุ</label><input type="text" id="stNote" value="' + esc(s ? s.note : '') + '"></div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnSaveSet">💾 บันทึก</button>',
+    onOpen: function (wrap, close) {
+      const refresh = function () {
+        const scale = Number(wrap.querySelector('#stScale').value) || 5;
+        const full = Number(wrap.querySelector('#stFull').value) || 0;
+        const box = wrap.querySelector('#stPreview span:last-child');
+        box.innerHTML = full > 0
+          ? 'คะแนนสุทธิเต็ม <b>' + scale + '.00</b> → <b>' + num(full) + '</b> คะแนน &nbsp;·&nbsp; ' +
+            'ได้ <b>' + num(scale * 0.85) + '</b> → <b>' + num(scale * 0.85 / scale * full) + '</b> คะแนน &nbsp;·&nbsp; ' +
+            'ได้ <b>' + num(scale * 0.7) + '</b> → <b>' + num(scale * 0.7 / scale * full) + '</b> คะแนน'
+          : 'ไม่แปลงคะแนน — รายงานจะแสดงคะแนนสุทธิเต็ม ' + scale + ' ตามปกติ';
+      };
+      wrap.querySelector('#stScale').oninput = refresh;
+      wrap.querySelector('#stFull').oninput = refresh;
+      refresh();
+
+      wrap.querySelector('#btnSaveSet').onclick = async function () {
+        try {
+          await apiWithButton(this, 'apiSaveSet', App.session.token, {
+            id: s ? s.id : '',
+            name: wrap.querySelector('#stName').value.trim(),
+            description: wrap.querySelector('#stDesc').value.trim(),
+            scaleMax: Number(wrap.querySelector('#stScale').value),
+            fullMarks: Number(wrap.querySelector('#stFull').value),
+            useGroupWeights: wrap.querySelector('#stGroupW').checked,
+            normalize: wrap.querySelector('#stNorm').checked,
+            useCriteriaWeights: wrap.querySelector('#stCritW').checked,
+            order: Number(wrap.querySelector('#stOrder').value),
+            status: wrap.querySelector('#stStatus').value,
+            note: wrap.querySelector('#stNote').value.trim()
+          });
+          close();
+          toast(s ? 'บันทึกชุดประเมินเรียบร้อย' : 'สร้างชุดประเมินเรียบร้อย', 'ok');
+          App.go('sets');
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+/* ---------- กลุ่มผู้ประเมินของชุด ---------- */
+
+Sets.groupDraft = [];
+
+Sets.editGroups = function (setId) {
+  const data = Sets.data;
+  const s = data.sets.filter(function (x) { return x.id === setId; })[0];
+  if (!s) return;
+
+  Sets.groupDraft = s.groups.map(function (g) {
+    return { key: g.key, name: g.name, type: g.type, members: g.members.slice(), weight: g.weight, status: g.status };
+  });
+
+  modal({
+    title: '👥 ผู้ประเมินของชุด "' + s.name + '"',
+    wide: true,
+    body:
+      '<p class="card__desc">แบ่งผู้ประเมินเป็นกลุ่ม แล้วกำหนดว่าคะแนนของแต่ละกลุ่มคิดเป็นกี่ % ของคะแนนรวม<br>' +
+        '<b>แบบบทบาท</b> = ทุกคนที่มีบทบาทนั้น &nbsp;·&nbsp; <b>แบบรายบุคคล</b> = เลือกรายคน (มีสิทธิ์เหนือกว่าแบบบทบาท)</p>' +
+      '<div id="grpList"></div>' +
+      '<div class="btn-row" style="margin-top:10px">' +
+        '<button class="btn btn--soft btn--sm" id="btnAddRoleGroup">➕ เพิ่มกลุ่มตามบทบาท</button>' +
+        '<button class="btn btn--soft btn--sm" id="btnAddPersonGroup">➕ เพิ่มกลุ่มรายบุคคล</button>' +
+        '<div class="spacer"></div><span class="badge" id="grpTotal"></span>' +
+      '</div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button>' +
+      '<button class="btn" id="btnSaveGroups">💾 บันทึกกลุ่มผู้ประเมิน</button>',
+    onOpen: function (wrap, close) {
+      Sets.renderGroups(wrap);
+      wrap.querySelector('#btnAddRoleGroup').onclick = function () {
+        Sets.groupDraft.push({ key: '', name: 'กลุ่มใหม่', type: data.groupTypes.ROLE, members: [], weight: 0, status: 'ใช้งาน' });
+        Sets.renderGroups(wrap);
+      };
+      wrap.querySelector('#btnAddPersonGroup').onclick = function () {
+        Sets.groupDraft.push({ key: '', name: 'กลุ่มเฉพาะบุคคล', type: data.groupTypes.PERSON, members: [], weight: 0, status: 'ใช้งาน' });
+        Sets.renderGroups(wrap);
+      };
+      wrap.querySelector('#btnSaveGroups').onclick = async function () {
+        try {
+          await apiWithButton(this, 'apiSaveSetGroups', App.session.token, s.id, Sets.groupDraft);
+          close();
+          toast('บันทึกกลุ่มผู้ประเมินเรียบร้อย', 'ok');
+          App.go('sets');
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+Sets.renderGroups = function (wrap) {
+  const data = Sets.data;
+  const host = wrap.querySelector('#grpList');
+
+  host.innerHTML = Sets.groupDraft.map(function (g, i) {
+    const isRole = g.type === data.groupTypes.ROLE;
+    const choices = isRole
+      ? data.roles.map(function (r) { return { value: r.name, label: r.name }; })
+      : data.evaluators.map(function (e) {
+          return { value: e.id, label: e.name + ' (' + e.role + (e.scope ? ' - ' + e.scope : '') + ')' };
+        });
+
+    return '<div class="group-row" data-index="' + i + '">' +
+      '<div class="group-row__top">' +
+        '<input type="text" class="grpName" data-index="' + i + '" value="' + esc(g.name) + '" placeholder="ชื่อกลุ่ม">' +
+        '<span class="badge ' + (isRole ? 'badge--brand' : 'badge--warn') + '">' + esc(g.type) + '</span>' +
+        '<div class="group-row__weight">' +
+          '<input type="number" class="grpWeight" data-index="' + i + '" min="0" max="100" step="0.5" value="' + g.weight + '"><span>%</span>' +
+        '</div>' +
+        '<button class="btn btn--ghost btn--sm grpDel" data-index="' + i + '">🗑️</button>' +
+      '</div>' +
+      '<div class="group-row__members">' +
+        choices.map(function (c) {
+          const checked = g.members.indexOf(c.value) !== -1;
+          return '<label class="checkbox checkbox--inline"><input type="checkbox" class="grpMember" ' +
+            'data-index="' + i + '" value="' + esc(c.value) + '"' + (checked ? ' checked' : '') + '>' +
+            '<span>' + esc(c.label) + '</span></label>';
+        }).join('') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  host.querySelectorAll('.grpName').forEach(function (el) {
+    el.oninput = function () { Sets.groupDraft[Number(this.dataset.index)].name = this.value; };
+  });
+  host.querySelectorAll('.grpWeight').forEach(function (el) {
+    el.oninput = function () {
+      Sets.groupDraft[Number(this.dataset.index)].weight = Number(this.value) || 0;
+      Sets.updateGroupTotal(wrap);
+    };
+  });
+  host.querySelectorAll('.grpMember').forEach(function (el) {
+    el.onchange = function () {
+      const g = Sets.groupDraft[Number(this.dataset.index)];
+      const at = g.members.indexOf(this.value);
+      if (this.checked && at === -1) g.members.push(this.value);
+      if (!this.checked && at !== -1) g.members.splice(at, 1);
+    };
+  });
+  host.querySelectorAll('.grpDel').forEach(function (el) {
+    el.onclick = function () {
+      if (Sets.groupDraft.length <= 1) { toast('ต้องมีกลุ่มผู้ประเมินอย่างน้อย 1 กลุ่ม', 'warn'); return; }
+      Sets.groupDraft.splice(Number(this.dataset.index), 1);
+      Sets.renderGroups(wrap);
+    };
+  });
+
+  Sets.updateGroupTotal(wrap);
+};
+
+Sets.updateGroupTotal = function (wrap) {
+  const total = Math.round(Sets.groupDraft.reduce(function (a, g) { return a + (Number(g.weight) || 0); }, 0) * 10) / 10;
+  const badge = wrap.querySelector('#grpTotal');
+  if (!badge) return;
+  badge.textContent = 'รวม ' + total + '%';
+  badge.className = 'badge ' + (total === 100 ? 'badge--ok' : 'badge--warn');
+};
+
+/* ---------- คัดลอก / ปิดใช้ / ลบ ---------- */
+
+Sets.copy = function (id) {
+  const s = Sets.data.sets.filter(function (x) { return x.id === id; })[0];
+  if (!s) return;
+  modal({
+    title: '📋 คัดลอกชุดประเมิน',
+    body: '<p class="card__desc">คัดลอก "' + esc(s.name) + '" พร้อมเกณฑ์ ' + s.criteriaCount +
+        ' ข้อ และกลุ่มผู้ประเมิน ' + s.groups.length + ' กลุ่ม (ไม่คัดลอกผลการประเมิน)</p>' +
+      '<div class="field"><label>ชื่อชุดใหม่ *</label>' +
+        '<input type="text" id="cpName" value="' + esc(s.name + ' (สำเนา)') + '"></div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnDoCopy">📋 คัดลอก</button>',
+    onOpen: function (wrap, close) {
+      wrap.querySelector('#btnDoCopy').onclick = async function () {
+        try {
+          const res = await apiWithButton(this, 'apiCopySet', App.session.token, id, wrap.querySelector('#cpName').value.trim());
+          close();
+          toast('คัดลอกชุดประเมินเรียบร้อย', 'ok', 6000);
+          App.go('sets');
+          return res;
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+Sets.toggle = async function (id) {
+  try {
+    const res = await api('apiToggleSet', App.session.token, id);
+    toast(res.status === 'ใช้งาน' ? 'เปิดใช้งานชุดประเมินแล้ว' : 'ปิดใช้งานชุดประเมินแล้ว', 'ok');
+    App.go('sets');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+Sets.remove = async function (id) {
+  const s = Sets.data.sets.filter(function (x) { return x.id === id; })[0];
+  if (!s) return;
+  const yes = await confirmDialog({
+    title: '🗑️ ลบชุดประเมิน',
+    message: 'ลบ "' + s.name + '" พร้อมเกณฑ์ ' + s.criteriaCount + ' ข้อ และกลุ่มผู้ประเมินทั้งหมดหรือไม่?',
+    warning: 'ลบได้เฉพาะชุดที่ยังไม่มีผลการประเมิน และการลบนี้ย้อนกลับไม่ได้',
+    confirmText: 'ลบชุดประเมิน', danger: true
+  });
+  if (!yes) return;
+  try {
+    await api('apiDeleteSet', App.session.token, id);
+    toast('ลบชุดประเมินเรียบร้อย', 'ok');
+    App.go('sets');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+</script>

@@ -42,11 +42,25 @@ App.pages.dashboard = async function (container) {
       '<button class="btn btn--ghost" onclick="App.go(\'export\')">📤 ไปหน้าส่งออกรายงาน</button>' +
     '</div>' +
 
+    (data.window && !data.window.open
+      ? '<div class="alert alert--warn"><span>🔒</span><span><b>ปิดรับผลการประเมิน</b> — ' +
+        esc(data.window.reason) + ' <button class="linkish" onclick="App.go(\'progress\')">ตั้งค่ารอบการประเมิน</button></span></div>'
+      : '') +
+
     (data.weights && data.weights.enabled
       ? '<div class="alert alert--info"><span>⚖️</span><span>คะแนนที่แสดงเป็น <b>คะแนนสุทธิแบบถ่วงน้ำหนัก</b> — ' +
         data.weights.rows.filter(function (r) { return r.weight > 0; })
           .map(function (r) { return esc(r.role) + ' ' + r.weight + '%'; }).join(' · ') +
         ' <button class="linkish" onclick="App.go(\'weights\')">ปรับน้ำหนัก</button></span></div>'
+      : '') +
+
+    (data.sets && data.sets.converts
+      ? '<div class="alert alert--ok"><span>🧩</span><span>ชุดประเมินที่ใช้งาน: ' +
+        data.sets.sets.map(function (st) {
+          return '<b>' + esc(st.name) + '</b>' + (st.fullMarks ? ' ' + num(st.fullMarks) + ' คะแนน' : ' (ไม่แปลงคะแนน)');
+        }).join(' · ') +
+        ' &nbsp;→&nbsp; รวม <b>' + num(data.sets.fullMarksTotal) + ' คะแนน</b> ต่อครู 1 คน ' +
+        '<button class="linkish" onclick="App.go(\'sets\')">จัดการชุดประเมิน</button></span></div>'
       : '') +
     '<div class="grid grid-4" style="margin-bottom:18px">' +
       '<div class="stat"><div class="label">การประเมินทั้งหมด</div><div class="value">' + s.totalEvaluations + '</div>' +
@@ -54,7 +68,10 @@ App.pages.dashboard = async function (container) {
       '<div class="stat c2"><div class="label">ครูที่ถูกประเมินแล้ว</div><div class="value">' + s.teachersEvaluated +
         '</div><div class="hint">จากทั้งหมด ' + s.teachersTotal + ' คน</div></div>' +
       '<div class="stat c3"><div class="label">คะแนนเฉลี่ยรวม</div><div class="value">' + num(s.averageScore) +
-        '</div><div class="hint">เต็ม 5.00</div></div>' +
+        '</div><div class="hint">เต็ม 5.00' +
+        ((data.sets && data.sets.converts)
+          ? ' · เทียบเป็น ' + num(s.averageScore / 5 * data.sets.fullMarksTotal) + '/' + num(data.sets.fullMarksTotal)
+          : '') + '</div></div>' +
       '<div class="stat c4"><div class="label">ระดับดีเยี่ยม</div><div class="value">' + s.excellent +
         '</div><div class="hint">คน · ต้องปรับปรุง ' + s.needImprove + ' คน</div></div>' +
     '</div>' +
@@ -72,7 +89,8 @@ App.pages.dashboard = async function (container) {
 
     '<div class="card"><div class="card__head"><h3>🚦 ความคืบหน้าของผู้ประเมิน</h3>' +
       '<div class="spacer"></div><span class="small muted">' +
-      esc(semesterLabel(data.currentTerm.semester) + '/' + data.currentTerm.year) + '</span></div>' +
+      esc(semesterLabel(data.currentTerm.semester) + '/' + data.currentTerm.year) + '</span>' +
+      '<button class="btn btn--ghost btn--sm" onclick="App.go(\'progress\')">📈 ดูรายละเอียด/แจ้งเตือน</button></div>' +
       (data.progress.length ? '<div class="table-wrap scroll-y"><table><thead><tr>' +
         '<th>ผู้ประเมิน</th><th>บทบาท</th><th class="num">ประเมินแล้ว</th><th style="width:180px">ความคืบหน้า</th>' +
         '</tr></thead><tbody>' +

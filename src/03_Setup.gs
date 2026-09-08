@@ -8,6 +8,8 @@
 const HEADER_STYLES_ = {};
 HEADER_STYLES_[SHEETS.TEACHERS] = '#1a237e';
 HEADER_STYLES_[SHEETS.EVALUATORS] = '#b71c1c';
+HEADER_STYLES_[SHEETS.SETS] = '#00838f';
+HEADER_STYLES_[SHEETS.SET_GROUPS] = '#0277bd';
 HEADER_STYLES_[SHEETS.CRITERIA] = '#1b5e20';
 HEADER_STYLES_[SHEETS.DUTY] = '#00695c';
 HEADER_STYLES_[SHEETS.RESULTS] = '#e65100';
@@ -68,6 +70,10 @@ function runSetup_() {
   ensureSheet_(SHEETS.SETTINGS, ['คีย์', 'ค่า', 'คำอธิบาย'], created);
   ensureSheet_(SHEETS.TEACHERS, TEACHER_HEADERS, created);
   ensureSheet_(SHEETS.EVALUATORS, EVALUATOR_HEADERS, created);
+  ensureSheet_(SHEETS.SETS, SET_HEADERS, created);
+  ensureSheet_(SHEETS.SET_GROUPS, SET_GROUP_HEADERS, created);
+  // ตารางความหมายของระดับคะแนนวางอยู่ข้างตารางเกณฑ์ ต้องย้ายออกก่อนเติมคอลัมน์ใหม่
+  clearScoreLegend_();
   ensureSheet_(SHEETS.CRITERIA, CRITERIA_HEADERS, created);
   ensureSheet_(SHEETS.DUTY, DUTY_HEADERS, created);
   ensureSheet_(SHEETS.RESULTS, resultHeaders_(), created);
@@ -78,22 +84,29 @@ function runSetup_() {
   // 3) ค่าตั้งต้นของระบบ
   seedSettings_();
 
-  // 4) เกณฑ์การประเมินเริ่มต้น (ถ้ายังไม่มี)
+  // 4) ชุดประเมินและกลุ่มผู้ประเมินเริ่มต้น (ถ้ายังไม่มี)
+  if (readTable_(SHEETS.SETS).rows.length === 0) {
+    seedDefaultSet_();
+    created.push('ชุดประเมินเริ่มต้น');
+  }
+
+  // 5) เกณฑ์การประเมินเริ่มต้น (ถ้ายังไม่มี)
   if (readTable_(SHEETS.CRITERIA).rows.length === 0) {
     seedCriteria_();
     created.push('เกณฑ์การประเมินเริ่มต้น');
   }
+  writeScoreLegend_();
 
-  // 5) ย้ายข้อมูลจากระบบเดิม
+  // 6) ย้ายข้อมูลจากระบบเดิม
   const migrationResult = migrateLegacyData_();
   migrationResult.forEach(function (m) { migrated.push(m); });
 
-  // 6) จัดรูปแบบ ตรวจสอบความถูกต้อง และป้องกันชีทอ่อนไหว
+  // 7) จัดรูปแบบ ตรวจสอบความถูกต้อง และป้องกันชีทอ่อนไหว
   applyFormatting_();
   applyValidations_();
   protectSensitiveSheets_();
 
-  // 7) รหัสผ่านผู้ดูแลระบบ (สร้างเฉพาะครั้งแรกที่ยังไม่เคยมี)
+  // 8) รหัสผ่านผู้ดูแลระบบ (สร้างเฉพาะครั้งแรกที่ยังไม่เคยมี)
   let adminPassword = '';
   if (!str_(getSetting_(SETTING_KEYS.ADMIN_HASH, ''))) {
     adminPassword = generatePassword_(12);
@@ -163,8 +176,10 @@ function seedSettings_() {
 }
 
 function seedCriteria_() {
+  const setId = defaultSetId_();
   const rows = DEFAULT_CRITERIA.map(function (c) {
     return {
+      'รหัสชุด': setId,
       'ข้อที่': c.id,
       'เกณฑ์การประเมิน': c.name,
       'ผู้มีสิทธิ์ประเมิน': c.roles.map(function (r) { return ROLES[r]; }).join(', '),
@@ -174,8 +189,68 @@ function seedCriteria_() {
     };
   });
   appendRecords_(SHEETS.CRITERIA, rows);
+}
 
-  writeScoreLegend_();
+/**
+ * สร้างชุดประเมินหลักพร้อมกลุ่มผู้ประเมิน 4 กลุ่มตามบทบาทมาตรฐาน
+ * น้ำหนักของแต่ละกลุ่มยกมาจากการตั้งค่ากลางเดิม ระบบจึงคิดคะแนนได้เหมือนเดิมทุกประการ
+ */
+function seedDefaultSet_() {
+  appendRecord_(SHEETS.SETS, {
+    'รหัสชุด': DEFAULT_SET.id,
+    'ชื่อชุดประเมิน': DEFAULT_SET.name,
+    'คำอธิบาย': DEFAULT_SET.description,
+    'คะแนนเต็มต่อข้อ': DEFAULT_SET.scaleMax,
+    'คะแนนที่หน่วยงานได้รับ': DEFAULT_SET.fullMarks,
+    'ถ่วงน้ำหนักรายข้อ': yesNo_(getSettingBool_(SETTING_KEYS.USE_WEIGHTS, 'ไม่')),
+    'ถ่วงน้ำหนักกลุ่มผู้ประเมิน': yesNo_(getSettingBool_(SETTING_KEYS.USE_ROLE_WEIGHTS, 'ไม่')),
+    'ปรับสัดส่วนอัตโนมัติ': yesNo_(getSettingBool_(SETTING_KEYS.NORMALIZE_ROLE_WEIGHTS, 'ใช่')),
+    'ลำดับ': 1,
+    'สถานะ': STATUS.ACTIVE,
+    'หมายเหตุ': '',
+    'วันที่สร้าง': new Date()
+  });
+  invalidateTable_(SHEETS.SETS);
+  seedSetGroups_(DEFAULT_SET.id, roleWeights_());
+}
+
+/** สร้างกลุ่มผู้ประเมินมาตรฐาน 4 กลุ่มให้ชุดที่ระบุ */
+function seedSetGroups_(setId, weights) {
+  const w = weights || roleWeights_();
+  const rows = Object.keys(ROLES).map(function (key, i) {
+    return {
+      'รหัสชุด': setId,
+      'รหัสกลุ่ม': key,
+      'ชื่อกลุ่มผู้ประเมิน': ROLES[key],
+      'ประเภท': GROUP_TYPES.ROLE,
+      'สมาชิก': ROLES[key],
+      'น้ำหนัก (%)': Number(w[key]) || 0,
+      'ลำดับ': i + 1,
+      'สถานะ': STATUS.ACTIVE
+    };
+  });
+  appendRecords_(SHEETS.SET_GROUPS, rows);
+  invalidateTable_(SHEETS.SET_GROUPS);
+  return rows.length;
+}
+
+/**
+ * ลบตารางความหมายของระดับคะแนนออกก่อน เพื่อให้การเติมคอลัมน์ใหม่ของตารางเกณฑ์
+ * ไปต่อท้ายคอลัมน์ของตารางเกณฑ์จริง ไม่ใช่ต่อท้ายตารางคำอธิบาย
+ */
+function clearScoreLegend_() {
+  const sheet = ss_().getSheetByName(SHEETS.CRITERIA);
+  if (!sheet || sheet.getLastColumn() === 0) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  const at = headers.indexOf('ความหมายของระดับคะแนน');
+  if (at === -1) return;
+
+  const rows = SCORE_MEANING.length + 2;
+  const range = sheet.getRange(1, at + 1, rows, 3);
+  try { range.breakApart(); } catch (e) { /* ไม่มีเซลล์ที่ผสานไว้ */ }
+  range.clear();
+  invalidateTable_(SHEETS.CRITERIA);
 }
 
 /**
@@ -221,6 +296,9 @@ function applyFormatting_() {
   widths[SHEETS.EVALUATORS] = [110, 90, 120, 130, 200, 250, 160, 200, 260, 200, 110, 130, 90, 160, 110, 160, 150];
   widths[SHEETS.DUTY] = [110, 100, 90, 90, 200, 110, 120, 180, 90, 100, 130, 200, 90, 150, 160];
   widths[SHEETS.SETTINGS] = [230, 380, 420];
+  widths[SHEETS.SETS] = [95, 300, 320, 110, 130, 110, 140, 130, 65, 90, 220, 150];
+  widths[SHEETS.SET_GROUPS] = [95, 130, 260, 90, 340, 95, 65, 90];
+  widths[SHEETS.CRITERIA] = [95, 65, 330, 300, 90, 300, 90];
 
   Object.keys(widths).forEach(function (name) {
     const sheet = ss_().getSheetByName(name);
@@ -270,7 +348,13 @@ function applyValidations_() {
   apply(SHEETS.DUTY, 'บทบาทในเวร', DUTY_POSITIONS, 2000);
   apply(SHEETS.DUTY, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 2000);
 
-  apply(SHEETS.CRITERIA, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 50);
+  apply(SHEETS.CRITERIA, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 200);
+  apply(SHEETS.SETS, 'ถ่วงน้ำหนักรายข้อ', ['ใช่', 'ไม่'], 50);
+  apply(SHEETS.SETS, 'ถ่วงน้ำหนักกลุ่มผู้ประเมิน', ['ใช่', 'ไม่'], 50);
+  apply(SHEETS.SETS, 'ปรับสัดส่วนอัตโนมัติ', ['ใช่', 'ไม่'], 50);
+  apply(SHEETS.SETS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 50);
+  apply(SHEETS.SET_GROUPS, 'ประเภท', [GROUP_TYPES.ROLE, GROUP_TYPES.PERSON], 300);
+  apply(SHEETS.SET_GROUPS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 300);
 }
 
 /** ซ่อนและป้องกันชีทที่มีข้อมูลอ่อนไหว */
@@ -357,9 +441,16 @@ function migrateLegacyData_() {
   });
   if (evalFilled) notes.push('อัปเดตข้อมูลผู้ประเมิน ' + evalFilled + ' รายการ');
 
+  // --- เกณฑ์การประเมิน: ผูกเข้ากับชุดประเมินหลัก ---
+  const criteriaMoved = migrateCriteriaToSet_();
+  if (criteriaMoved) notes.push('ผูกเกณฑ์การประเมินเดิม ' + criteriaMoved + ' ข้อเข้ากับชุด "' + defaultSet_().name + '"');
+
   // --- ผลการประเมินเดิม: เติมรหัส ปีการศึกษา และคำนวณคะแนนให้เป็นค่าคงที่ ---
   const migratedResults = migrateLegacyResults_(year);
   if (migratedResults) notes.push('ย้ายผลการประเมินเดิม ' + migratedResults + ' รายการ');
+
+  const resultsTagged = migrateResultsToSet_();
+  if (resultsTagged) notes.push('ระบุชุดประเมินให้ผลการประเมินเดิม ' + resultsTagged + ' รายการ');
 
   // --- เวรประจำวัน: สร้างตารางเวรให้ภาคเรียนปัจจุบัน และทุกภาคเรียนที่พบในผลการประเมินเดิม ---
   const terms = [{ year: year, semester: semester }];
@@ -376,6 +467,55 @@ function migrateLegacyData_() {
   });
 
   return notes;
+}
+
+/** เติมรหัสชุดให้เกณฑ์การประเมินที่ยังไม่มี (ข้อมูลจากระบบก่อน 3.3) */
+function migrateCriteriaToSet_() {
+  const setId = defaultSetId_();
+  const table = readTable_(SHEETS.CRITERIA);
+  if (table.headers.indexOf('รหัสชุด') === -1) return 0;
+
+  let count = 0;
+  table.rows.forEach(function (row) {
+    if (str_(row['รหัสชุด'])) return;
+    if (!num_(row['ข้อที่']) || !str_(row['เกณฑ์การประเมิน'])) return;
+    updateRecord_(SHEETS.CRITERIA, row._row, { 'รหัสชุด': setId });
+    count++;
+  });
+  return count;
+}
+
+/** เติมรหัสชุดและกลุ่มผู้ประเมินให้ผลการประเมินเดิม เพื่อให้รายงานแยกตามชุดได้ */
+function migrateResultsToSet_() {
+  const table = readTable_(SHEETS.RESULTS);
+  if (table.headers.indexOf('รหัสชุด') === -1) return 0;
+
+  const set = defaultSet_();
+  const groups = loadSetGroups_(set.id);
+  const evaluatorIndex = buildEvaluatorIndex_();
+  const updates = [];
+
+  table.rows.forEach(function (row) {
+    if (str_(row['รหัสชุด'])) return;
+    const evaluator = evaluatorIndex.byName[str_(row['ผู้ประเมิน'])] || {};
+    const group = groupOfEvaluator_(groups, {
+      id: str_(row['รหัสผู้ประเมิน']) || evaluator.id,
+      name: str_(row['ผู้ประเมิน']),
+      role: str_(row['บทบาทผู้ประเมิน']) || evaluator.role
+    });
+    updates.push({
+      row: row._row,
+      patch: {
+        'รหัสชุด': set.id,
+        'ชุดประเมิน': set.name,
+        'กลุ่มผู้ประเมิน': group ? group.key : '',
+        'คะแนนเต็มต่อข้อ': set.scaleMax
+      }
+    });
+  });
+
+  updateRecords_(SHEETS.RESULTS, updates);
+  return updates.length;
 }
 
 /** แปลงผลการประเมินรูปแบบเดิมให้เข้ากับโครงสร้างใหม่ */

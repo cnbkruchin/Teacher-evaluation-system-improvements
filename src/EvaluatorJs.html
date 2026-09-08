@@ -3,22 +3,29 @@
    EvaluatorJs — หน้าจอสำหรับผู้ประเมิน
    ============================================================ */
 
-const Evaluator = { ctx: null, editingId: null };
+const Evaluator = { ctx: null, editingId: null, setId: '' };
 
 /* ---------- แบบประเมิน ---------- */
 
 App.pages.evaluate = async function (container) {
   const token = App.session.token;
-  const ctx = await api('apiEvaluatorContext', token, Evaluator.year || '', Evaluator.semester || '');
+  const ctx = await api('apiEvaluatorContext', token,
+    Evaluator.year || '', Evaluator.semester || '', Evaluator.setId || '');
   Evaluator.ctx = ctx;
   Evaluator.year = ctx.year;
   Evaluator.semester = ctx.semester;
+  Evaluator.setId = ctx.setId;
   App.setTermBadge(ctx.year, ctx.semester);
 
   const doneCount = Object.keys(ctx.completed).length;
   const percent = ctx.teachers.length ? Math.round(doneCount / ctx.teachers.length * 100) : 0;
+  const multiSet = ctx.sets.length > 1;
 
   container.innerHTML =
+    (ctx.window.open ? '' :
+      '<div class="alert alert--warn"><span>🔒</span><span><b>ขณะนี้ยังบันทึกผลไม่ได้</b> — ' +
+        esc(ctx.window.reason) + '<br>ท่านยังดูรายชื่อครูและเกณฑ์การประเมินได้ตามปกติ</span></div>') +
+
     '<div class="card">' +
       '<div class="card__head"><h3>👤 ' + esc(ctx.evaluator.name) + '</h3>' +
         '<span class="badge badge--brand">' + esc(ctx.evaluator.role) +
@@ -28,13 +35,25 @@ App.pages.evaluate = async function (container) {
       '</div>' +
       '<div class="progress"><div style="width:' + percent + '%"></div></div>' +
       '<div class="filters" style="margin-top:16px;margin-bottom:0">' +
+        (multiSet
+          ? '<div class="field" style="min-width:220px"><label>ชุดประเมิน</label><select id="evSet">' +
+              optionsHtml(ctx.sets, ctx.setId, function (x) {
+                return { value: x.id, label: x.name + ' (' + x.criteriaCount + ' ข้อ)' };
+              }) + '</select></div>'
+          : '') +
         '<div class="field"><label>ปีการศึกษา</label><select id="evYear">' +
           optionsHtml(ctx.years, ctx.year) + '</select></div>' +
         '<div class="field"><label>ภาคเรียน</label><select id="evSemester">' +
           optionsHtml(ctx.semesters, ctx.semester, function (s) { return { value: s, label: semesterLabel(s) }; }) +
         '</select></div>' +
-        '<button class="btn btn--soft" id="btnChangeTerm">เปลี่ยนภาคเรียน</button>' +
+        '<button class="btn btn--soft" id="btnChangeTerm">เปลี่ยนรอบการประเมิน</button>' +
       '</div>' +
+      '<div class="alert alert--info" style="margin-top:14px"><span>🧩</span><span>' +
+        'กำลังประเมินชุด <b>' + esc(ctx.setName) + '</b>' +
+        (ctx.setDescription ? ' — ' + esc(ctx.setDescription) : '') +
+        '<br>ท่านอยู่ในกลุ่มผู้ประเมิน "<b>' + esc(ctx.groupName) + '</b>" · ให้คะแนนข้อละ 1-' + ctx.scaleMax + ' คะแนน' +
+        (ctx.fullMarks ? ' · ชุดนี้คิดเป็น ' + num(ctx.fullMarks) + ' คะแนนของหน่วยงาน' : '') +
+      '</span></div>' +
     '</div>' +
 
     '<div class="card">' +
@@ -56,8 +75,15 @@ App.pages.evaluate = async function (container) {
   $('btnChangeTerm').onclick = function () {
     Evaluator.year = $('evYear').value;
     Evaluator.semester = $('evSemester').value;
+    if ($('evSet')) Evaluator.setId = $('evSet').value;
     App.go('evaluate');
   };
+  if ($('evSet')) {
+    $('evSet').onchange = function () {
+      Evaluator.setId = this.value;
+      App.go('evaluate');
+    };
+  }
 
   const renderTeacherOptions = function (keyword) {
     const k = (keyword || '').toLowerCase();
@@ -106,20 +132,24 @@ Evaluator.selectTeacher = function (teacherId) {
 
 Evaluator.renderForm = function (teacher, existing) {
   const ctx = Evaluator.ctx;
+  const max = ctx.scaleMax || 5;
+  const scale = [];
+  for (let v = 1; v <= max; v++) scale.push(v);
+
   const legend = ctx.scoreMeaning.map(function (s, i) {
-    const cls = ['r-excellent', 'r-great', 'r-good', 'r-fair', 'r-improve'][i];
+    const cls = ['r-excellent', 'r-great', 'r-good', 'r-fair', 'r-improve'][Math.min(i, 4)];
     return '<span class="' + cls + '">' + s.score + ' = ' + esc(s.label) + '</span>';
   }).join('');
 
   $('formArea').innerHTML =
     '<div class="card">' +
-      '<div class="card__head"><h3>📋 เกณฑ์การประเมิน (' + ctx.criteria.length + ' ข้อ)</h3>' +
+      '<div class="card__head"><h3>📋 ' + esc(ctx.setName) + ' (' + ctx.criteria.length + ' ข้อ)</h3>' +
         '<div class="spacer"></div><span class="badge badge--muted" id="scoreProgress">0 / ' + ctx.criteria.length + '</span></div>' +
       '<div class="legend">' + legend + '</div>' +
       '<div class="btn-row" style="margin-bottom:14px">' +
-        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(5)">ให้ 5 ทุกข้อ</button>' +
-        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(4)">ให้ 4 ทุกข้อ</button>' +
-        '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(3)">ให้ 3 ทุกข้อ</button>' +
+        [max, max - 1, max - 2].filter(function (v) { return v >= 1; }).map(function (v) {
+          return '<button class="btn btn--ghost btn--sm" onclick="Evaluator.fillAll(' + v + ')">ให้ ' + v + ' ทุกข้อ</button>';
+        }).join('') +
         '<button class="btn btn--ghost btn--sm" onclick="Evaluator.clearScores()">ล้างคะแนน</button>' +
       '</div>' +
       '<div id="criteriaList">' +
@@ -128,7 +158,7 @@ Evaluator.renderForm = function (teacher, existing) {
             '<div class="no">' + c.id + '</div>' +
             '<div class="txt">' + esc(c.name) +
               (c.description ? '<div class="small muted">' + esc(c.description) + '</div>' : '') + '</div>' +
-            '<div class="rate">' + [1, 2, 3, 4, 5].map(function (s) {
+            '<div class="rate">' + scale.map(function (s) {
               return '<input type="radio" name="sc_' + c.id + '" id="sc_' + c.id + '_' + s + '" value="' + s +
                 '" onchange="Evaluator.updateProgress()"><label for="sc_' + c.id + '_' + s + '">' + s + '</label>';
             }).join('') + '</div></div>';
@@ -139,7 +169,8 @@ Evaluator.renderForm = function (teacher, existing) {
         '<textarea id="comment" rows="3" maxlength="1000" placeholder="ระบุข้อเสนอแนะเพิ่มเติม (ถ้ามี)"></textarea>' +
         '<div class="hint">ไม่เกิน 1,000 ตัวอักษร</div>' +
       '</div>' +
-      '<button class="btn btn--lg btn--block" id="btnSubmitEval" disabled>✅ บันทึกผลการประเมิน</button>' +
+      '<button class="btn btn--lg btn--block" id="btnSubmitEval" disabled>' +
+        (ctx.window.open ? '✅ บันทึกผลการประเมิน' : '🔒 ปิดรับผลการประเมินแล้ว') + '</button>' +
     '</div>';
 
   // ถ้าเคยประเมินไว้แล้ว ให้ดึงคะแนนเดิมมาแสดงเพื่อแก้ไข
@@ -186,7 +217,7 @@ Evaluator.updateProgress = function () {
     badge.className = 'badge ' + (done === criteria.length ? 'badge--ok' : 'badge--muted');
   }
   const btn = $('btnSubmitEval');
-  if (btn) btn.disabled = done !== criteria.length;
+  if (btn) btn.disabled = (done !== criteria.length) || !Evaluator.ctx.window.open;
 };
 
 Evaluator.submit = async function (teacher, button) {
@@ -200,6 +231,7 @@ Evaluator.submit = async function (teacher, button) {
     const res = await apiWithButton(button, 'apiSubmitEvaluation', App.session.token, {
       year: Evaluator.year,
       semester: Evaluator.semester,
+      setId: Evaluator.setId,
       teacherId: teacher.id,
       scores: scores,
       comment: $('comment').value
@@ -220,11 +252,12 @@ App.pages.myHistory = async function (container) {
       '<div class="card__head"><h3>📋 ผลการประเมินที่ฉันบันทึกไว้</h3>' +
         '<div class="spacer"></div><span class="badge badge--brand">' + rows.length + ' รายการ</span></div>' +
       (rows.length ? '<div class="table-wrap"><table><thead><tr>' +
-        '<th class="num">#</th><th>ภาคเรียน</th><th>ครู</th><th>ระดับชั้น</th><th>เวร</th>' +
+        '<th class="num">#</th><th>ภาคเรียน</th><th>ชุดประเมิน</th><th>ครู</th><th>ระดับชั้น</th><th>เวร</th>' +
         '<th class="num">เฉลี่ย</th><th>ระดับ</th><th>บันทึกเมื่อ</th><th></th></tr></thead><tbody>' +
         rows.map(function (r, i) {
           return '<tr><td class="num">' + (i + 1) + '</td>' +
             '<td>' + esc(r.semester + '/' + r.year) + '</td>' +
+            '<td class="small">' + esc(r.setName || '-') + '</td>' +
             '<td><b>' + esc(r.teacher) + '</b>' + (r.revision ? ' <span class="badge badge--muted">แก้ไข ' + r.revision + ' ครั้ง</span>' : '') + '</td>' +
             '<td>' + esc(r.level || '-') + '</td><td>' + esc(r.dutyDay || '-') + '</td>' +
             '<td class="num"><b>' + num(r.average) + '</b></td>' +
