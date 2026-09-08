@@ -812,6 +812,24 @@ check('รายงานรายบุคคล 1 คน = 1 แผ่นง�
 check('ไม่มีครูที่มีผล → แจ้งเตือน',
   apiExportTeacherCards(T2, { year: '2999', semester: '1', teacherIds: [], formats: ['pdf'] }).success === false);
 
+// ตรวจเนื้อหาของการ์ดรายบุคคลที่เขียนลงแผ่นงานจริง
+const cardSheet = mock.store.created.slice(-1)[0].getSheets()[0];
+const cardText = cardSheet.data.map(row => row.map(c => String(c === undefined ? '' : c)).join('|')).join('\n');
+check('การ์ดมีหัวข้อครบ 4 ส่วน',
+  ['๑. ข้อมูลผู้รับการประเมิน', '๒. ผลการประเมินแยกตามชุดประเมิน',
+   '๓. คะแนนเฉลี่ยรายข้อ', '๔. ข้อเสนอแนะจากผู้ประเมิน'].every(h => cardText.indexOf(h) !== -1));
+check('การ์ดแสดงชื่อครูและรหัสครู',
+  cardText.indexOf(targetTeacher.name) !== -1 && cardText.indexOf(targetTeacher.id) !== -1);
+// ตอนออกการ์ด ชุดหลักได้ 5.00/5 → 20 คะแนน และชุดที่ 2 ได้ 4.00/4 → 30 คะแนน
+check('การ์ดแสดงคะแนนที่หน่วยงานได้รับทั้ง 2 ชุด',
+  cardText.indexOf('20 / 20') !== -1 && cardText.indexOf('30 / 30') !== -1, cardText.substring(0, 400));
+check('การ์ดสรุปคะแนนรวมของหน่วยงาน', cardText.indexOf('50 / 50 คะแนน') !== -1);
+check('การ์ดมีช่องลงนาม', cardText.indexOf('ลงชื่อ') !== -1 && cardText.indexOf('วันที่') !== -1);
+check('การ์ดแสดงเกณฑ์รายข้อของทั้งสองชุด',
+  cardText.indexOf('คัดกรองนักเรียนรายบุคคล') !== -1 && cardText.indexOf('เกณฑ์วิชาการข้อ 1') !== -1);
+check('การ์ด 1 คนใช้ 1 แผ่นงาน จึงได้ PDF หน้าละ 1 คน',
+  mock.store.created.slice(-1)[0].getSheets().length === 1);
+
 // --- ติดตามความคืบหน้า ---
 const prog = apiEvaluationProgress(T2, SYEAR, SSEM);
 check('ติดตามความคืบหน้าได้', prog.success === true, prog.message);

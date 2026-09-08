@@ -948,7 +948,11 @@ function buildSetScorecardSheet_(spreadsheet, rows, year, semester, setInfo) {
 
 // ==================== แบบรายงานรายบุคคล (Report Card) ====================
 
-const MAX_TEACHER_CARDS_ = 120;
+/**
+ * จำนวนสูงสุดต่อการออก 1 ครั้ง — จำกัดไว้เพื่อไม่ให้ชนขีดจำกัดเวลาทำงานของ Apps Script (6 นาที)
+ * โรงเรียนที่มีครูมากกว่านี้ให้แบ่งออกเป็นหลายรอบ (เช่น เลือกทีละระดับชั้น)
+ */
+const MAX_TEACHER_CARDS_ = 80;
 
 /**
  * ออกรายงานรายบุคคล — 1 คน 1 หน้า พร้อมช่องลงนาม
@@ -965,7 +969,8 @@ function apiExportTeacherCards(token, payload) {
     if (!rows.length) return fail_('ไม่มีครูที่มีผลการประเมินให้ออกรายงาน กรุณาเลือกอย่างน้อย 1 คน');
     if (rows.length > MAX_TEACHER_CARDS_) {
       return fail_('ออกรายงานรายบุคคลได้ครั้งละไม่เกิน ' + MAX_TEACHER_CARDS_ +
-        ' คน (เลือกไว้ ' + rows.length + ' คน) กรุณาแบ่งเป็นหลายรอบ');
+        ' คน (เลือกไว้ ' + rows.length + ' คน)\n' +
+        'กรุณาแบ่งออกเป็นหลายรอบ เช่น กรองทีละระดับชั้นหรือทีละวันเวร แล้วออกรายงานทีละชุด');
     }
 
     const term = currentTerm_();
@@ -1029,158 +1034,175 @@ function buildTeacherCardsSpreadsheet_(rows, year, semester, options) {
   return temp;
 }
 
-/** วางเนื้อหารายงาน 1 หน้าของครู 1 คน ลงในแผ่นงานที่กำหนด */
+/**
+ * วางเนื้อหารายงาน 1 หน้าของครู 1 คน ลงในแผ่นงานที่กำหนด
+ *
+ * เขียนเนื้อหาทั้งหน้าด้วย setValues ครั้งเดียว แล้วจึงจัดรูปแบบเป็นช่วง ๆ
+ * เพื่อให้การออกรายงานหลายสิบคนไม่ชนขีดจำกัดเวลาทำงานของ Apps Script
+ */
 function buildTeacherCard_(sheet, r, year, semester, ctx) {
-  const W = 6;                    // ความกว้างของการ์ด (คอลัมน์)
-  const line = function (row, text, style) {
-    const st = style || {};
-    const range = sheet.getRange(row, 1, 1, W).merge().setValue(text)
-      .setHorizontalAlignment(st.align || 'left').setWrap(true);
-    if (st.bold) range.setFontWeight('bold');
-    if (st.size) range.setFontSize(st.size);
-    if (st.color) range.setFontColor(st.color);
-    if (st.background) range.setBackground(st.background);
-    return range;
+  const W = 6;                      // ความกว้างของการ์ด (คอลัมน์)
+  const grid = [];                  // เนื้อหาทั้งหน้า เขียนทีเดียว
+  const merges = [];                // [row, col, numRows, numCols]
+  const sections = [];              // แถวหัวข้อใหญ่
+  const tableHeads = [];            // แถวหัวตาราง
+  const numberRows = [];            // [row, col, numRows, numCols]
+
+  const line = function (values) {
+    grid.push(values.concat(new Array(Math.max(0, W - values.length)).fill('')));
+    return grid.length;             // เลขแถวของบรรทัดที่เพิ่งเพิ่ม
   };
 
   // ---- หัวรายงาน ----
-  line(1, ctx.org, { align: 'center', bold: true, size: 15, color: '#1a237e' });
-  line(2, 'รายงานผลการประเมินการปฏิบัติงานครู (รายบุคคล)', { align: 'center', bold: true, size: 13, color: '#1a237e' });
-  line(3, 'กลุ่มบริหารงานกิจการนักเรียน   |   ' + termLabel_(year, semester), { align: 'center', color: '#555555' });
+  const orgRow = line([ctx.org]);
+  const titleRow = line(['รายงานผลการประเมินการปฏิบัติงานครู (รายบุคคล)']);
+  const termRow = line(['กลุ่มบริหารงานกิจการนักเรียน   |   ' + termLabel_(year, semester)]);
+  merges.push([orgRow, 1, 1, W], [titleRow, 1, 1, W], [termRow, 1, 1, W]);
+  line([]);
 
-  // ---- ข้อมูลครู ----
-  sheet.getRange(5, 1, 1, W).merge().setValue('๑. ข้อมูลผู้รับการประเมิน')
-    .setFontWeight('bold').setBackground('#e8eaf6').setFontColor('#1a237e');
-  const info = [
-    ['ชื่อ-นามสกุล', r.name, 'รหัสครู', r.teacherId || '-'],
-    ['ระดับชั้นที่ปรึกษา', r.level || '-', 'กลุ่มสาระ/ฝ่าย', r.department || '-'],
-    ['เวรประจำวัน', r.dutyDay || '-', 'บทบาทในเวร', r.dutyPosition || '-']
-  ];
-  sheet.getRange(6, 1, info.length, 4).setValues(info);
-  sheet.getRange(6, 1, info.length, 1).setFontWeight('bold').setBackground('#f5f5f5');
-  sheet.getRange(6, 3, info.length, 1).setFontWeight('bold').setBackground('#f5f5f5');
-  sheet.getRange(6, 2, info.length, 1).setNumberFormat('@');
-  sheet.getRange(6, 1, info.length, W)
-    .setBorder(true, true, true, true, true, true, '#cfd8dc', SpreadsheetApp.BorderStyle.SOLID);
+  // ---- ๑. ข้อมูลผู้รับการประเมิน ----
+  sections.push(line(['๑. ข้อมูลผู้รับการประเมิน']));
+  const infoStart = line(['ชื่อ-นามสกุล', r.name, '', 'รหัสครู', r.teacherId || '-']);
+  line(['ระดับชั้นที่ปรึกษา', r.level || '-', '', 'กลุ่มสาระ/ฝ่าย', r.department || '-']);
+  line(['เวรประจำวัน', r.dutyDay || '-', '', 'บทบาทในเวร', r.dutyPosition || '-']);
+  const infoEnd = line(['จุดปฏิบัติหน้าที่', r.dutyLocation || '-', '', 'เวลาปฏิบัติหน้าที่', r.dutyTime || '-']);
+  line([]);
 
-  let row = 6 + info.length + 1;
-
-  // ---- คะแนนรายชุดประเมิน ----
-  sheet.getRange(row, 1, 1, W).merge().setValue('๒. ผลการประเมินแยกตามชุดประเมิน')
-    .setFontWeight('bold').setBackground('#e8eaf6').setFontColor('#1a237e');
-  row++;
-
-  const setHeaders = ['ชุดประเมิน', 'จำนวนผู้ประเมิน', 'คะแนนเฉลี่ย', 'คะแนนสุทธิ', 'คะแนนที่ได้รับ', 'ระดับ'];
-  sheet.getRange(row, 1, 1, W).setValues([setHeaders])
-    .setBackground('#3949ab').setFontColor('#ffffff').setFontWeight('bold')
-    .setHorizontalAlignment('center').setWrap(true);
-  row++;
+  // ---- ๒. ผลการประเมินแยกตามชุดประเมิน ----
+  sections.push(line(['๒. ผลการประเมินแยกตามชุดประเมิน']));
+  const setHeadRow = line(['ชุดประเมิน', 'จำนวนผู้ประเมิน', 'คะแนนเฉลี่ย', 'คะแนนสุทธิ', 'คะแนนที่ได้รับ', 'ระดับ']);
+  tableHeads.push(setHeadRow);
 
   const setRows = (r.sets || []).filter(function (st) { return st.count > 0 || st.fullMarks > 0; });
-  const setValues = setRows.map(function (st) {
-    return [
+  const setFirstRow = setHeadRow + 1;
+  setRows.forEach(function (st) {
+    line([
       st.setName + ' (เต็มข้อละ ' + st.scaleMax + ')',
       st.count || 0,
       st.count ? st.average : '-',
       st.count ? st.net : '-',
-      st.count && st.converted !== null ? (st.converted + ' / ' + st.fullMarks) : '-',
+      (st.count && st.converted !== null) ? (st.converted + ' / ' + st.fullMarks) : '-',
       st.rating || 'ยังไม่ได้รับการประเมิน'
-    ];
+    ]);
   });
-  if (setValues.length) {
-    sheet.getRange(row, 1, setValues.length, W).setValues(setValues);
-    sheet.getRange(row, 2, setValues.length, 3).setHorizontalAlignment('center');
-    sheet.getRange(row, 5, setValues.length, 2).setHorizontalAlignment('center').setFontWeight('bold');
-    setRows.forEach(function (st, i) {
-      sheet.getRange(row + i, 6).setBackground(ratingColor_(st.rating));
-    });
-    row += setValues.length;
-  }
+  if (setRows.length) numberRows.push([setFirstRow, 3, setRows.length, 2]);
 
-  sheet.getRange(row, 1, 1, 4).merge().setValue('รวมคะแนนที่หน่วยงานได้รับ')
-    .setFontWeight('bold').setHorizontalAlignment('right').setBackground('#e8eaf6');
-  sheet.getRange(row, 5, 1, 2).merge()
-    .setValue(r.converted + ' / ' + (r.fullMarks || ctx.setInfo.fullMarksTotal) + ' คะแนน')
-    .setFontWeight('bold').setHorizontalAlignment('center').setBackground('#e8eaf6').setFontColor('#1a237e');
-  sheet.getRange(row - setValues.length - 1, 1, setValues.length + 2, W)
-    .setBorder(true, true, true, true, true, true, '#b0bec5', SpreadsheetApp.BorderStyle.SOLID);
-  row += 2;
+  const totalRow = line(['รวมคะแนนที่หน่วยงานได้รับ', '', '', '',
+    r.converted + ' / ' + (r.fullMarks || ctx.setInfo.fullMarksTotal) + ' คะแนน']);
+  merges.push([totalRow, 1, 1, 4], [totalRow, 5, 1, 2]);
+  line([]);
 
-  // ---- คะแนนรายข้อ ----
-  sheet.getRange(row, 1, 1, W).merge().setValue('๓. คะแนนเฉลี่ยรายข้อ')
-    .setFontWeight('bold').setBackground('#e8eaf6').setFontColor('#1a237e');
-  row++;
-  sheet.getRange(row, 1, 1, W).setValues([['ข้อที่', 'รายการประเมิน', '', '', 'คะแนนเฉลี่ย', 'เต็ม']])
-    .setBackground('#00695c').setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center');
-  sheet.getRange(row, 2, 1, 3).merge().setHorizontalAlignment('left');
-  row++;
+  // ---- ๓. คะแนนเฉลี่ยรายข้อ ----
+  sections.push(line(['๓. คะแนนเฉลี่ยรายข้อ']));
+  const criteriaHeadRow = line(['ข้อที่', 'รายการประเมิน', '', '', 'คะแนนเฉลี่ย', 'เต็ม']);
+  tableHeads.push(criteriaHeadRow);
 
+  const scoredSets = (r.sets || []).filter(function (st) { return st.count > 0; });
+  const criteriaFirstRow = criteriaHeadRow + 1;
+  const subHeaders = [];
   let itemCount = 0;
-  (r.sets || []).forEach(function (st) {
-    if (!st.count) return;
+  scoredSets.forEach(function (st) {
     const criteria = ctx.criteriaBySet[st.setId] || [];
     if (!criteria.length) return;
-    if ((r.sets || []).filter(function (x) { return x.count; }).length > 1) {
-      sheet.getRange(row, 1, 1, W).merge().setValue('▸ ' + st.setName)
-        .setFontWeight('bold').setBackground('#e0f2f1').setFontColor('#004d40');
-      row++;
-    }
+    if (scoredSets.length > 1) subHeaders.push(line(['▸ ' + st.setName]));
     criteria.forEach(function (c) {
       const v = st.criteriaAverages[c.id];
-      sheet.getRange(row, 1).setValue(c.id).setHorizontalAlignment('center');
-      sheet.getRange(row, 2, 1, 3).merge().setValue(c.name).setWrap(true);
-      sheet.getRange(row, 5).setValue(v === undefined || v === null ? '-' : v)
-        .setNumberFormat('0.00').setHorizontalAlignment('center');
-      sheet.getRange(row, 6).setValue(st.scaleMax).setHorizontalAlignment('center');
-      row++;
+      line([c.id, c.name, '', '', (v === undefined || v === null) ? '-' : v, st.scaleMax]);
       itemCount++;
     });
   });
-  if (!itemCount) {
-    line(row, 'ไม่มีคะแนนรายข้อ', { align: 'center', color: '#777777' });
-    row++;
+  if (!itemCount) line(['', 'ไม่มีคะแนนรายข้อ']);
+  const criteriaLastRow = grid.length;
+  if (criteriaLastRow >= criteriaFirstRow) {
+    numberRows.push([criteriaFirstRow, 5, criteriaLastRow - criteriaFirstRow + 1, 1]);
   }
-  row++;
+  line([]);
 
-  // ---- ข้อเสนอแนะ ----
-  sheet.getRange(row, 1, 1, W).merge().setValue('๔. ข้อเสนอแนะจากผู้ประเมิน')
-    .setFontWeight('bold').setBackground('#e8eaf6').setFontColor('#1a237e');
-  row++;
+  // ---- ๔. ข้อเสนอแนะ ----
+  sections.push(line(['๔. ข้อเสนอแนะจากผู้ประเมิน']));
+  const commentFirstRow = grid.length + 1;
   const comments = (r.comments || []).slice(0, 8);
   if (comments.length) {
     comments.forEach(function (c) {
-      sheet.getRange(row, 1, 1, W).merge()
-        .setValue('• ' + c.comment + '   (' + (c.role || c.evaluator) + ')')
-        .setWrap(true).setVerticalAlignment('top');
-      row++;
+      line(['• ' + c.comment + '   (' + (c.role || c.evaluator) + ')']);
     });
   } else {
-    line(row, '— ไม่มีข้อเสนอแนะ —', { align: 'center', color: '#777777' });
-    row++;
+    line(['— ไม่มีข้อเสนอแนะ —']);
   }
+  const commentLastRow = grid.length;
+  for (let i = commentFirstRow; i <= commentLastRow; i++) merges.push([i, 1, 1, W]);
   if (str_(ctx.note)) {
-    row++;
-    line(row, 'หมายเหตุ: ' + ctx.note, { color: '#555555' });
-    row++;
+    line([]);
+    merges.push([line(['หมายเหตุ: ' + ctx.note]), 1, 1, W]);
   }
 
   // ---- ช่องลงนาม ----
-  row += 2;
-  sheet.getRange(row, 4, 1, 3).merge()
-    .setValue('ลงชื่อ ..................................................').setHorizontalAlignment('center');
-  sheet.getRange(row + 1, 4, 1, 3).merge()
-    .setValue('( ' + (ctx.signer || '.................................................') + ' )')
-    .setHorizontalAlignment('center');
-  sheet.getRange(row + 2, 4, 1, 3).merge()
-    .setValue(ctx.signerRole || 'ผู้อำนวยการโรงเรียน').setHorizontalAlignment('center');
-  sheet.getRange(row + 3, 4, 1, 3).merge()
-    .setValue('วันที่ ......... / ......... / .........').setHorizontalAlignment('center');
+  line([]);
+  line([]);
+  const signRow = line(['', '', '', 'ลงชื่อ ..................................................']);
+  line(['', '', '', '( ' + (ctx.signer || '.................................................') + ' )']);
+  line(['', '', '', ctx.signerRole || 'ผู้อำนวยการโรงเรียน']);
+  line(['', '', '', 'วันที่ ......... / ......... / .........']);
+  for (let i = 0; i < 4; i++) merges.push([signRow + i, 4, 1, 3]);
 
-  sheet.setColumnWidth(1, 60);
-  sheet.setColumnWidth(2, 190);
-  sheet.setColumnWidth(3, 90);
-  sheet.setColumnWidth(4, 100);
-  sheet.setColumnWidth(5, 110);
-  sheet.setColumnWidth(6, 90);
+  // ==================== เขียนลงชีทและจัดรูปแบบ ====================
+  sheet.getRange(1, 1, grid.length, W).setValues(grid);
+  merges.forEach(function (m) { sheet.getRange(m[0], m[1], m[2], m[3]).merge(); });
+
+  sheet.getRange(orgRow, 1, 1, W).setFontSize(15).setFontWeight('bold')
+    .setFontColor('#1a237e').setHorizontalAlignment('center');
+  sheet.getRange(titleRow, 1, 1, W).setFontSize(13).setFontWeight('bold')
+    .setFontColor('#1a237e').setHorizontalAlignment('center');
+  sheet.getRange(termRow, 1, 1, W).setFontColor('#555555').setHorizontalAlignment('center');
+
+  sections.forEach(function (row) {
+    sheet.getRange(row, 1, 1, W).setFontWeight('bold')
+      .setBackground('#e8eaf6').setFontColor('#1a237e');
+  });
+  tableHeads.forEach(function (row) {
+    sheet.getRange(row, 1, 1, W).setFontWeight('bold').setFontColor('#ffffff')
+      .setBackground(row === setHeadRow ? '#3949ab' : '#00695c')
+      .setHorizontalAlignment('center').setWrap(true);
+  });
+  subHeaders.forEach(function (row) {
+    sheet.getRange(row, 1, 1, W).setFontWeight('bold').setBackground('#e0f2f1').setFontColor('#004d40');
+  });
+
+  // ข้อมูลผู้รับการประเมิน: ป้ายกำกับเป็นตัวหนาบนพื้นเทาอ่อน
+  const infoRows = infoEnd - infoStart + 1;
+  sheet.getRange(infoStart, 1, infoRows, 1).setFontWeight('bold').setBackground('#f5f5f5');
+  sheet.getRange(infoStart, 4, infoRows, 1).setFontWeight('bold').setBackground('#f5f5f5');
+  sheet.getRange(infoStart, 1, infoRows, W)
+    .setBorder(true, true, true, true, true, true, '#cfd8dc', SpreadsheetApp.BorderStyle.SOLID);
+
+  numberRows.forEach(function (n) {
+    sheet.getRange(n[0], n[1], n[2], n[3]).setNumberFormat('0.00').setHorizontalAlignment('center');
+  });
+  if (setRows.length) {
+    sheet.getRange(setFirstRow, 2, setRows.length, 1).setHorizontalAlignment('center');
+    sheet.getRange(setFirstRow, 5, setRows.length, 2).setHorizontalAlignment('center').setFontWeight('bold');
+    setRows.forEach(function (st, i) {
+      sheet.getRange(setFirstRow + i, 6).setBackground(ratingColor_(st.rating));
+    });
+  }
+  sheet.getRange(totalRow, 1, 1, W).setFontWeight('bold').setBackground('#e8eaf6').setFontColor('#1a237e');
+  sheet.getRange(totalRow, 1).setHorizontalAlignment('right');
+  sheet.getRange(totalRow, 5).setHorizontalAlignment('center');
+  sheet.getRange(setHeadRow, 1, totalRow - setHeadRow + 1, W)
+    .setBorder(true, true, true, true, true, true, '#b0bec5', SpreadsheetApp.BorderStyle.SOLID);
+
+  sheet.getRange(criteriaHeadRow, 1, criteriaLastRow - criteriaHeadRow + 1, 1).setHorizontalAlignment('center');
+  sheet.getRange(criteriaHeadRow, 6, criteriaLastRow - criteriaHeadRow + 1, 1).setHorizontalAlignment('center');
+  sheet.getRange(criteriaFirstRow, 2, Math.max(1, criteriaLastRow - criteriaFirstRow + 1), 1).setWrap(true);
+  sheet.getRange(commentFirstRow, 1, commentLastRow - commentFirstRow + 1, W)
+    .setWrap(true).setVerticalAlignment('top');
+  sheet.getRange(signRow, 4, 4, 3).setHorizontalAlignment('center');
+
+  sheet.setColumnWidth(1, 58);
+  sheet.setColumnWidth(2, 250);
+  sheet.setColumnWidth(3, 80);
+  sheet.setColumnWidth(4, 120);
+  sheet.setColumnWidth(5, 118);
+  sheet.setColumnWidth(6, 92);
   return sheet;
 }
