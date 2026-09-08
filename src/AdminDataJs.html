@@ -144,20 +144,28 @@ Admin.teacherHistory = async function (key) {
       body:
         (d.trend.length ? '<h4 style="font-size:14px;margin-bottom:8px">คะแนนเฉลี่ยรายภาคเรียน</h4>' +
           '<div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>ภาคเรียน</th>' +
-          '<th>เวรประจำวัน</th><th class="num">คะแนนเฉลี่ย</th><th>ระดับ</th><th class="num">จำนวนครั้ง</th>' +
+          '<th>เวรประจำวัน</th><th>คะแนนรายชุดประเมิน</th>' +
+          '<th class="num">เฉลี่ย<br><span class="small">(เทียบมาตรา 5)</span></th>' +
+          '<th>ระดับ</th><th class="num">จำนวนครั้ง</th>' +
           '</tr></thead><tbody>' + d.trend.map(function (t) {
             return '<tr><td><b>' + esc(t.label) + '</b></td><td>' + esc(t.dutyDay || '-') + '</td>' +
+              '<td class="small">' + (t.sets || []).map(function (st) {
+                return '<div>' + esc(st.setName || st.setId) + ' <b>' + num(st.average) + '</b>/' + st.scaleMax +
+                  (st.converted !== null && st.converted !== undefined
+                    ? ' → ' + num(st.converted) + '/' + num(st.fullMarks) + ' คะแนน' : '') + '</div>';
+              }).join('') + '</td>' +
               '<td class="num"><b>' + num(t.average) + '</b></td>' +
               '<td><span class="badge ' + ratingClass(t.rating) + '">' + esc(t.rating) + '</span></td>' +
               '<td class="num">' + t.count + '</td></tr>';
           }).join('') + '</tbody></table></div>' : '') +
         '<h4 style="font-size:14px;margin-bottom:8px">รายการประเมินทั้งหมด (' + d.records.length + ')</h4>' +
         '<div class="table-wrap scroll-y"><table><thead><tr><th>บันทึกเมื่อ</th><th>ภาคเรียน</th>' +
-        '<th>ผู้ประเมิน</th><th class="num">เฉลี่ย</th><th>ระดับ</th><th>แหล่งข้อมูล</th></tr></thead><tbody>' +
+        '<th>ชุดประเมิน</th><th>ผู้ประเมิน</th><th class="num">เฉลี่ย</th><th>ระดับ</th><th>แหล่งข้อมูล</th></tr></thead><tbody>' +
         d.records.map(function (r) {
           return '<tr><td class="small muted">' + esc(r.savedAt) + '</td>' +
-            '<td>' + esc(r.semester + '/' + r.year) + '</td><td>' + esc(r.evaluator) + '</td>' +
-            '<td class="num">' + num(r.average) + '</td>' +
+            '<td>' + esc(r.semester + '/' + r.year) + '</td>' +
+            '<td class="small">' + esc(r.setName || '-') + '</td><td>' + esc(r.evaluator) + '</td>' +
+            '<td class="num">' + num(r.average) + '<span class="small muted">/' + (r.scaleMax || 5) + '</span></td>' +
             '<td><span class="badge ' + ratingClass(r.rating) + '">' + esc(r.rating) + '</span></td>' +
             '<td class="small">' + esc(r.source) + (r.archiveType ? ' · ' + esc(r.archiveType) : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>',

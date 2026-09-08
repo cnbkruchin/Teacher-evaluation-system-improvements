@@ -200,15 +200,26 @@ function apiTeacherHistory(token, teacherKey) {
     const key = str_(teacherKey);
     if (!key) return fail_('กรุณาระบุครูที่ต้องการดูประวัติ');
 
+    // ข้อมูลชุดประเมิน ใช้เทียบมาตราคะแนนของแต่ละชุดให้เป็นมาตรฐานเดียวกัน
+    const mainSetId = defaultSetId_();
+    const setById = {};
+    loadSets_().forEach(function (st) { setById[st.id] = st; });
+
     const collect = function (rows, source) {
       return rows.filter(function (r) {
         if (str_(r['สถานะ']) === STATUS.CANCELLED) return false;
         return str_(r['รหัสครู']) === key || str_(r['ครูผู้รับการประเมิน']) === key;
       }).map(function (r) {
+        const setId = str_(r['รหัสชุด']) || mainSetId;
+        const set = setById[setId];
+        const scaleMax = num_(r['คะแนนเต็มต่อข้อ']) || (set ? set.scaleMax : SET_DEFAULT_SCALE_MAX);
         return {
           source: source,
           year: str_(r['ปีการศึกษา']),
           semester: str_(r['ภาคเรียน']),
+          setId: setId,
+          setName: str_(r['ชุดประเมิน']) || (set ? set.name : ''),
+          scaleMax: scaleMax,
           evaluator: str_(r['ผู้ประเมิน']),
           role: str_(r['บทบาทผู้ประเมิน']),
           dutyDay: str_(r['เวรประจำวัน']),
@@ -227,25 +238,46 @@ function apiTeacherHistory(token, teacherKey) {
     if (!all.length) return fail_('ไม่พบประวัติการประเมินของครูท่านนี้');
 
     // สรุปคะแนนเฉลี่ยรายภาคเรียน (นับเฉพาะข้อมูลปัจจุบันและที่จัดเก็บทั้งภาคเรียน)
+    // ชุดที่ใช้มาตราคะแนนต่างกันจะถูกเทียบเป็นมาตรา 5 ก่อน เพื่อให้เปรียบเทียบข้ามภาคเรียนได้อย่างเป็นธรรม
     const byTerm = {};
     all.forEach(function (r) {
       if (r.source === 'คลังข้อมูล' && r.archiveType !== 'จัดเก็บภาคเรียน') return;
       const k = r.year + '/' + r.semester;
-      byTerm[k] = byTerm[k] || { year: r.year, semester: r.semester, scores: [], dutyDay: r.dutyDay };
-      byTerm[k].scores.push(r.average);
+      byTerm[k] = byTerm[k] || {
+        year: r.year, semester: r.semester, scores: [], dutyDay: r.dutyDay, bySet: {}
+      };
+      const t = byTerm[k];
+      t.scores.push(r.average * 5 / (r.scaleMax || SET_DEFAULT_SCALE_MAX));
+      t.bySet[r.setId] = t.bySet[r.setId] || { setId: r.setId, setName: r.setName, scaleMax: r.scaleMax, scores: [] };
+      t.bySet[r.setId].scores.push(r.average);
     });
+
+    const meanOf = function (arr) {
+      return Math.round((arr.reduce(function (a, b) { return a + b; }, 0) / arr.length) * 100) / 100;
+    };
 
     const trend = Object.keys(byTerm).map(function (k) {
       const t = byTerm[k];
-      const avg = t.scores.reduce(function (a, b) { return a + b; }, 0) / t.scores.length;
+      const avg = meanOf(t.scores);
       return {
         term: k,
         label: termLabel_(t.year, t.semester),
         year: t.year, semester: t.semester,
         dutyDay: t.dutyDay,
-        average: Math.round(avg * 100) / 100,
+        average: avg,                    // เทียบเป็นมาตรา 5 แล้ว
         rating: ratingOf_(avg),
-        count: t.scores.length
+        count: t.scores.length,
+        sets: Object.keys(t.bySet).map(function (id) {
+          const b = t.bySet[id];
+          const set = setById[id];
+          const mean = meanOf(b.scores);
+          return {
+            setId: id, setName: b.setName, scaleMax: b.scaleMax,
+            average: mean, count: b.scores.length,
+            converted: set ? convertScore_(mean, set) : null,
+            fullMarks: set ? (Number(set.fullMarks) || 0) : 0
+          };
+        })
       };
     }).sort(function (a, b) {
       return (a.year + a.semester).localeCompare(b.year + b.semester);

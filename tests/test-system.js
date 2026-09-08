@@ -898,6 +898,41 @@ check('ปิดชุดจนเหลือชุดเดียวไม่�
     return r.success === false;
   })());
 
+// --- ประวัติรายบุคคลข้ามชุดประเมิน ---
+const hist = apiTeacherHistory(T2, targetTeacher.id);
+check('ดูประวัติการประเมินรายบุคคลได้', hist.success === true, hist.message);
+const histTerm = hist.data.trend.filter(t => t.year === SYEAR && t.semester === SSEM)[0];
+check('ประวัติแยกคะแนนรายชุดประเมิน', histTerm && histTerm.sets.length === 2,
+  histTerm && histTerm.sets.map(x => x.setId));
+// ชุดหลักเฉลี่ย 5.00 (เต็ม 5) · ชุดที่ 2 เฉลี่ย 3.00 (เต็ม 4) → เทียบเป็น 3.75 → เฉลี่ยรวม 4.38
+check('ชุดมาตรา 4 ถูกเทียบเป็นมาตรา 5 ก่อนเฉลี่ยรวม',
+  Math.abs(histTerm.average - 4.38) < 0.01, histTerm.average);
+check('ประวัติแสดงคะแนนที่หน่วยงานได้รับของแต่ละชุด',
+  histTerm && histTerm.sets.every(x => x.converted !== null && x.fullMarks > 0),
+  histTerm && histTerm.sets.map(x => [x.converted, x.fullMarks]));
+check('รายการประเมินระบุชุดและมาตราคะแนน',
+  hist.data.records.every(r => r.setId && r.scaleMax > 0));
+
+// --- สรุปผลลงชีทพร้อมคะแนนที่หน่วยงานได้รับ ---
+const genSum = apiGenerateSummary(T2, { year: SYEAR, semester: SSEM, teacherIds: [targetTeacher.id] });
+check('สรุปผลลงชีทได้', genSum.success === true, genSum.message);
+const sumHeaders = tableHeaders_(SHEETS.SUMMARY);
+check('ชีทสรุปผลมีคอลัมน์คะแนนที่หน่วยงานได้รับ',
+  sumHeaders.indexOf('คะแนนที่หน่วยงานได้รับ') !== -1 &&
+  sumHeaders.indexOf('คะแนนเต็มที่หน่วยงานกำหนด') !== -1, sumHeaders);
+const sumRowSheet = readTable_(SHEETS.SUMMARY).rows[0];
+// ชุดหลัก 5.00/5 → 20 คะแนน · ชุดที่ 2 3.00/4 → 22.50 คะแนน  รวม 42.50 จากเต็ม 50
+check('ชีทสรุปผลบันทึกคะแนนที่ได้รับถูกต้อง (42.50 จาก 50)',
+  num_(sumRowSheet['คะแนนที่หน่วยงานได้รับ']) === 42.5 &&
+  num_(sumRowSheet['คะแนนเต็มที่หน่วยงานกำหนด']) === 50,
+  [sumRowSheet['คะแนนที่หน่วยงานได้รับ'], sumRowSheet['คะแนนเต็มที่หน่วยงานกำหนด']]);
+
+// --- เคลียร์ข้อมูลยังทำงานกับผลที่มีชุดประเมิน ---
+const clearPrev = apiClearPreview(T2, { target: 'results', scope: 'term', year: SYEAR, semester: SSEM });
+check('ดูตัวอย่างการเคลียร์ข้อมูลของภาคเรียนที่มีหลายชุดได้',
+  clearPrev.success === true && clearPrev.data.results === 2 && clearPrev.data.archived === 1,
+  clearPrev.message || clearPrev.data);
+
 const setList = apiListSets(T2);
 check('หน้าชุดประเมินแสดงข้อมูลครบ',
   setList.success === true && setList.data.sets.length === 2 &&
