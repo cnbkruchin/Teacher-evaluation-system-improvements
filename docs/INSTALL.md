@@ -35,6 +35,8 @@
 | `13_Maintenance` | `src/13_Maintenance.gs` |
 | `14_Scoring` | `src/14_Scoring.gs` |
 | `15_Import` | `src/15_Import.gs` |
+| `16_Sets` | `src/16_Sets.gs` |
+| `17_Operations` | `src/17_Operations.gs` |
 
 > ลบไฟล์ `Code.gs` ที่มีมาให้ตั้งแต่ต้นออก (หรือวางทับด้วยเนื้อหาของ `00_Config.gs` ก็ได้)
 > หากเป็นการอัปเกรดจากระบบเดิม ให้ลบไฟล์ `Code.gs` เดิมทิ้งทั้งหมดก่อน
@@ -51,6 +53,8 @@
 | `AdminExportJs` | `src/AdminExportJs.html` |
 | `AdminTermsJs` | `src/AdminTermsJs.html` |
 | `AdminScoreJs` | `src/AdminScoreJs.html` |
+| `AdminSetsJs` | `src/AdminSetsJs.html` |
+| `AdminOpsJs` | `src/AdminOpsJs.html` |
 | `EvaluatorJs` | `src/EvaluatorJs.html` |
 
 > ชื่อไฟล์ HTML ต้องสะกดให้ตรงทุกตัวอักษร เพราะระบบเรียกใช้ผ่านชื่อไฟล์

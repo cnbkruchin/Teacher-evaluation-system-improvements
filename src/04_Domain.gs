@@ -636,10 +636,10 @@ function evaluationWindow_(year, semester) {
   const endDate = parseDateOnly_(end);
   if (startDate && today < startDate) {
     info.open = false;
-    info.reason = 'ยังไม่ถึงวันเปิดให้ประเมิน (เริ่ม ' + formatDate_(startDate, 'd MMMM yyyy') + ')';
+    info.reason = 'ยังไม่ถึงวันเปิดให้ประเมิน (เริ่ม ' + thaiDateText_(startDate) + ')';
   } else if (endDate && today > endDate) {
     info.open = false;
-    info.reason = 'หมดกำหนดการประเมินแล้ว (สิ้นสุด ' + formatDate_(endDate, 'd MMMM yyyy') + ')';
+    info.reason = 'หมดกำหนดการประเมินแล้ว (สิ้นสุด ' + thaiDateText_(endDate) + ')';
   }
   return info;
 }

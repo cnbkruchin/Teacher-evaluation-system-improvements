@@ -170,7 +170,7 @@ function apiSendReminders(token, options) {
     const org = str_(getSetting_(SETTING_KEYS.ORG_NAME, 'โรงเรียน'));
     const url = webAppUrl_();
     const windowInfo = evaluationWindow_(y, s);
-    const deadline = windowInfo.end ? formatDate_(parseDateOnly_(windowInfo.end), 'd MMMM yyyy') : '';
+    const deadline = windowInfo.end ? thaiDateText_(parseDateOnly_(windowInfo.end)) : '';
 
     const sent = [], failed = [];
     withEmail.forEach(function (r) {

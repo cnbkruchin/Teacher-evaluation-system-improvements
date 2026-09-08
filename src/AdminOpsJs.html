@@ -22,7 +22,9 @@ App.pages.progress = async function (container) {
   container.innerHTML =
     (data.window.open
       ? '<div class="alert alert--ok"><span>🟢</span><span><b>รอบการประเมินเปิดอยู่</b>' +
-        (data.window.end ? ' — สิ้นสุดวันที่ ' + esc(data.window.end) : '') + '</span></div>'
+        (data.window.start ? ' ตั้งแต่ ' + esc(thaiDate(data.window.start)) : '') +
+        (data.window.end ? ' ถึง ' + esc(thaiDate(data.window.end)) : '') +
+        (data.window.start || data.window.end ? '' : ' (ไม่จำกัดช่วงเวลา)') + '</span></div>'
       : '<div class="alert alert--warn"><span>🔒</span><span><b>ปิดรับผลการประเมิน</b> — ' +
         esc(data.window.reason) + '</span></div>') +
 

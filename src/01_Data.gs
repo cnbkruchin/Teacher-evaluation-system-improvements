@@ -387,6 +387,16 @@ function formatDate_(date, pattern) {
 }
 
 /** แปลงค่าจากชีทให้เป็น string ที่ปลอดภัยสำหรับส่งไปหน้าเว็บ */
+/** ชื่อเดือนภาษาไทย ใช้แสดงวันที่ให้ผู้ใช้อ่านง่าย */
+const THAI_MONTHS_ = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+/** วันที่แบบไทยพร้อมปี พ.ศ. เช่น "30 กันยายน 2569" */
+function thaiDateText_(date) {
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) return '';
+  return date.getDate() + ' ' + THAI_MONTHS_[date.getMonth()] + ' ' + (date.getFullYear() + 543);
+}
+
 function str_(v) {
   if (v === null || v === undefined) return '';
   if (v instanceof Date) return formatDate_(v);
