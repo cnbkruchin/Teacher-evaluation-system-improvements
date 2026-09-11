@@ -8,6 +8,7 @@
 const HEADER_STYLES_ = {};
 HEADER_STYLES_[SHEETS.TEACHERS] = '#1a237e';
 HEADER_STYLES_[SHEETS.EVALUATORS] = '#b71c1c';
+HEADER_STYLES_[SHEETS.ROLES] = '#5d4037';
 HEADER_STYLES_[SHEETS.SETS] = '#00838f';
 HEADER_STYLES_[SHEETS.SET_GROUPS] = '#0277bd';
 HEADER_STYLES_[SHEETS.CRITERIA] = '#1b5e20';
@@ -70,6 +71,7 @@ function runSetup_() {
   ensureSheet_(SHEETS.SETTINGS, ['คีย์', 'ค่า', 'คำอธิบาย'], created);
   ensureSheet_(SHEETS.TEACHERS, TEACHER_HEADERS, created);
   ensureSheet_(SHEETS.EVALUATORS, EVALUATOR_HEADERS, created);
+  ensureSheet_(SHEETS.ROLES, ROLE_HEADERS, created);
   ensureSheet_(SHEETS.SETS, SET_HEADERS, created);
   ensureSheet_(SHEETS.SET_GROUPS, SET_GROUP_HEADERS, created);
   // ตารางความหมายของระดับคะแนนวางอยู่ข้างตารางเกณฑ์ ต้องย้ายออกก่อนเติมคอลัมน์ใหม่
@@ -84,29 +86,35 @@ function runSetup_() {
   // 3) ค่าตั้งต้นของระบบ
   seedSettings_();
 
-  // 4) ชุดประเมินและกลุ่มผู้ประเมินเริ่มต้น (ถ้ายังไม่มี)
+  // 4) บทบาทของผู้ประเมินเริ่มต้น (ถ้ายังไม่มี)
+  if (readTable_(SHEETS.ROLES).rows.length === 0) {
+    seedRoles_();
+    created.push('บทบาทผู้ประเมินเริ่มต้น');
+  }
+
+  // 5) ชุดประเมินและกลุ่มผู้ประเมินเริ่มต้น (ถ้ายังไม่มี)
   if (readTable_(SHEETS.SETS).rows.length === 0) {
     seedDefaultSet_();
     created.push('ชุดประเมินเริ่มต้น');
   }
 
-  // 5) เกณฑ์การประเมินเริ่มต้น (ถ้ายังไม่มี)
+  // 6) เกณฑ์การประเมินเริ่มต้น (ถ้ายังไม่มี)
   if (readTable_(SHEETS.CRITERIA).rows.length === 0) {
     seedCriteria_();
     created.push('เกณฑ์การประเมินเริ่มต้น');
   }
   writeScoreLegend_();
 
-  // 6) ย้ายข้อมูลจากระบบเดิม
+  // 7) ย้ายข้อมูลจากระบบเดิม
   const migrationResult = migrateLegacyData_();
   migrationResult.forEach(function (m) { migrated.push(m); });
 
-  // 7) จัดรูปแบบ ตรวจสอบความถูกต้อง และป้องกันชีทอ่อนไหว
+  // 8) จัดรูปแบบ ตรวจสอบความถูกต้อง และป้องกันชีทอ่อนไหว
   applyFormatting_();
   applyValidations_();
   protectSensitiveSheets_();
 
-  // 8) รหัสผ่านผู้ดูแลระบบ (สร้างเฉพาะครั้งแรกที่ยังไม่เคยมี)
+  // 9) รหัสผ่านผู้ดูแลระบบ (สร้างเฉพาะครั้งแรกที่ยังไม่เคยมี)
   let adminPassword = '';
   if (!str_(getSetting_(SETTING_KEYS.ADMIN_HASH, ''))) {
     adminPassword = generatePassword_(12);
@@ -189,6 +197,58 @@ function seedCriteria_() {
     };
   });
   appendRecords_(SHEETS.CRITERIA, rows);
+}
+
+/** สร้างบทบาทผู้ประเมินเริ่มต้น 4 บทบาท (ผู้ดูแลเพิ่ม/แก้ไขได้ภายหลัง) */
+function seedRoles_() {
+  appendRecords_(SHEETS.ROLES, DEFAULT_ROLE_LIST.map(function (r, i) {
+    return {
+      'รหัสบทบาท': r.key,
+      'ชื่อบทบาท': r.name,
+      'ประเภทขอบเขต': r.scopeType,
+      'ตัวเลือกขอบเขต': '',
+      'คำอธิบาย': r.description,
+      'ลำดับ': i + 1,
+      'สถานะ': STATUS.ACTIVE
+    };
+  }));
+  invalidateTable_(SHEETS.ROLES);
+  return DEFAULT_ROLE_LIST.length;
+}
+
+/**
+ * เติมบทบาทที่พบในทะเบียนผู้ประเมินแต่ยังไม่มีในชีทบทบาท
+ * ป้องกันผู้ประเมินที่ถูกเพิ่มด้วยมือในชีทหลุดออกจากระบบหลังอัปเกรด
+ */
+function migrateRolesFromEvaluators_() {
+  const known = {};
+  readTable_(SHEETS.ROLES).rows.forEach(function (r) { known[str_(r['ชื่อบทบาท'])] = true; });
+
+  const found = [];
+  readTable_(SHEETS.EVALUATORS).rows.forEach(function (r) {
+    const name = str_(r['บทบาท']);
+    if (!name || known[name] || found.indexOf(name) !== -1) return;
+    found.push(name);
+  });
+  if (!found.length) return 0;
+
+  const codes = readTable_(SHEETS.ROLES).rows.map(function (r) { return str_(r['รหัสบทบาท']); });
+  const order = codes.length;
+  appendRecords_(SHEETS.ROLES, found.map(function (name, i) {
+    const code = nextCode_('ROL', codes);
+    codes.push(code);
+    return {
+      'รหัสบทบาท': code,
+      'ชื่อบทบาท': name,
+      'ประเภทขอบเขต': SCOPE_TYPES.ALL,
+      'ตัวเลือกขอบเขต': '',
+      'คำอธิบาย': 'เพิ่มอัตโนมัติจากทะเบียนผู้ประเมินเดิม — กรุณาตรวจสอบประเภทขอบเขตให้ถูกต้อง',
+      'ลำดับ': order + i + 1,
+      'สถานะ': STATUS.ACTIVE
+    };
+  }));
+  invalidateTable_(SHEETS.ROLES);
+  return found.length;
 }
 
 /**
@@ -296,6 +356,7 @@ function applyFormatting_() {
   widths[SHEETS.EVALUATORS] = [110, 90, 120, 130, 200, 250, 160, 200, 260, 200, 110, 130, 90, 160, 110, 160, 150];
   widths[SHEETS.DUTY] = [110, 100, 90, 90, 200, 110, 120, 180, 90, 100, 130, 200, 90, 150, 160];
   widths[SHEETS.SETTINGS] = [230, 380, 420];
+  widths[SHEETS.ROLES] = [110, 300, 130, 320, 320, 65, 90];
   widths[SHEETS.SETS] = [95, 300, 320, 110, 130, 110, 140, 130, 65, 90, 220, 150];
   widths[SHEETS.SET_GROUPS] = [95, 130, 260, 90, 340, 95, 65, 90];
   widths[SHEETS.CRITERIA] = [95, 65, 330, 300, 90, 300, 90];
@@ -339,8 +400,11 @@ function applyValidations_() {
   apply(SHEETS.TEACHERS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE]);
 
   apply(SHEETS.EVALUATORS, 'คำนำหน้า', PREFIXES, 200);
-  apply(SHEETS.EVALUATORS, 'บทบาท', Object.keys(ROLES).map(function (k) { return ROLES[k]; }), 200);
-  apply(SHEETS.EVALUATORS, 'ขอบเขต (ระดับชั้น/วัน)', LEVELS.concat(DAYS), 200);
+  const roleNames = activeRoles_().map(function (r) { return r.name; });
+  if (roleNames.length) apply(SHEETS.EVALUATORS, 'บทบาท', roleNames, 200);
+  apply(SHEETS.ROLES, 'ประเภทขอบเขต',
+    Object.keys(SCOPE_TYPES).map(function (k) { return SCOPE_TYPES[k]; }), 50);
+  apply(SHEETS.ROLES, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 50);
   apply(SHEETS.EVALUATORS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 200);
 
   apply(SHEETS.DUTY, 'ภาคเรียน', ALL_SEMESTERS.map(function (x) { return x.value; }), 2000);
@@ -440,6 +504,10 @@ function migrateLegacyData_() {
     if (Object.keys(patch).length) { updateRecord_(SHEETS.EVALUATORS, row._row, patch); evalFilled++; }
   });
   if (evalFilled) notes.push('อัปเดตข้อมูลผู้ประเมิน ' + evalFilled + ' รายการ');
+
+  // --- บทบาท: เติมบทบาทที่พบในทะเบียนผู้ประเมินแต่ยังไม่มีในชีทบทบาท ---
+  const rolesAdded = migrateRolesFromEvaluators_();
+  if (rolesAdded) notes.push('เพิ่มบทบาทผู้ประเมินที่พบในข้อมูลเดิม ' + rolesAdded + ' บทบาท');
 
   // --- เกณฑ์การประเมิน: ผูกเข้ากับชุดประเมินหลัก ---
   const criteriaMoved = migrateCriteriaToSet_();

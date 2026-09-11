@@ -237,7 +237,7 @@ function apiSaveScoreWeights(token, options) {
       // 3) ซิงก์กลับไปที่การตั้งค่ากลาง เพื่อให้ระบบส่วนที่อ้างอิงบทบาทได้ค่าตรงกัน
       if (set.id === defaultSetId_()) {
         const roleWeights = {};
-        Object.keys(ROLES).forEach(function (key) { roleWeights[key] = 0; });
+        Object.keys(DEFAULT_ROLE_WEIGHTS).forEach(function (key) { roleWeights[key] = 0; });
         let matched = false;
         groups.forEach(function (g) {
           if (g.type !== GROUP_TYPES.ROLE) return;

@@ -18,7 +18,7 @@ const MEMO_ = { ss: null, sheets: {}, tables: {}, headers: {}, derived: {} };
 
 /** ตารางที่แคชข้ามการทำงานได้ (เปลี่ยนไม่บ่อย) — ตารางผลการประเมินไม่แคช เพื่อให้เห็นข้อมูลล่าสุดเสมอ */
 const CACHEABLE_TABLES_ = [SHEETS.TEACHERS, SHEETS.EVALUATORS, SHEETS.CRITERIA, SHEETS.DUTY,
-  SHEETS.SETTINGS, SHEETS.SETS, SHEETS.SET_GROUPS];
+  SHEETS.SETTINGS, SHEETS.ROLES, SHEETS.SETS, SHEETS.SET_GROUPS];
 const TABLE_CACHE_TTL_ = 300;          // วินาที
 const TABLE_CACHE_MAX_ = 90000;        // อักขระ (ขีดจำกัดของ CacheService คือ 100KB ต่อคีย์)
 

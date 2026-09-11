@@ -107,7 +107,9 @@ function apiListSets(token) {
 
     return ok_({
       sets: sets,
-      roles: Object.keys(ROLES).map(function (k) { return { key: k, name: ROLES[k] }; }),
+      roles: activeRoles_().map(function (r) {
+        return { key: r.key, name: r.name, scopeType: r.scopeType };
+      }),
       evaluators: evaluators,
       groupTypes: GROUP_TYPES,
       maxSets: MAX_SETS,
@@ -370,8 +372,11 @@ function validateGroups_(input, evaluatorIndex) {
     const type = str_(g.type) === GROUP_TYPES.PERSON ? GROUP_TYPES.PERSON : GROUP_TYPES.ROLE;
     let members = (g.members || []).map(function (m) { return str_(m); }).filter(String);
     if (type === GROUP_TYPES.ROLE) {
-      members = members.filter(function (m) { return roleKey_(m) || ROLES[m]; })
-        .map(function (m) { return ROLES[m] || m; });
+      // สมาชิกส่งมาเป็นชื่อบทบาท หรือรหัสบทบาทก็ได้
+      members = members.map(function (m) {
+        const byKey = roleByKey_(m);
+        return byKey ? byKey.name : m;
+      }).filter(function (m) { return !!roleByName_(m); });
       if (!members.length) throw new Error('กลุ่ม "' + name + '" ยังไม่ได้เลือกบทบาทผู้ประเมิน');
     } else {
       members = members.filter(function (m) { return evaluatorIndex.byId[m] || evaluatorIndex.byName[m]; })
@@ -447,7 +452,7 @@ function syncRoleWeightsFromGroups_(setId, groups) {
   if (str_(setId) !== defaultSetId_()) return false;
   const weights = {};
   let matched = 0;
-  Object.keys(ROLES).forEach(function (key) { weights[key] = 0; });
+  Object.keys(DEFAULT_ROLE_WEIGHTS).forEach(function (key) { weights[key] = 0; });
   groups.forEach(function (g) {
     if (g.type !== GROUP_TYPES.ROLE) return;
     g.members.forEach(function (m) {

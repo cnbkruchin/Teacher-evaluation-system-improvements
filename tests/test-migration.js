@@ -101,7 +101,7 @@ check('ย้ายเวรประจำวันจากคอลัมน�
   teachers.map(t => t.defaultDay));
 
 section('ข้อมูลผู้ประเมินถูกย้ายครบ');
-const evaluators = apiListEvaluators(T).data;
+const evaluators = apiListEvaluators(T).data.rows;
 check('ผู้ประเมิน 3 คนยังอยู่ครบ', evaluators.length === 3, evaluators.length);
 check('ย้ายขอบเขต (ระดับชั้น/วัน) มาถูกคอลัมน์',
   evaluators.filter(e => e.role === 'หัวหน้าระดับชั้น')[0].scope === 'ม.1',

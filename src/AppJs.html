@@ -79,6 +79,7 @@ const READ_CACHE_TTL = 45000;                       // มิลลิวิน�
 const READ_PREFIXES = ['apiList', 'apiGet', 'apiAdminOverview', 'apiExportCandidates',
   'apiEvaluatorContext', 'apiEvaluatorDutyView', 'apiMyEvaluations', 'apiTeacherHistory',
   'apiHealthCheck', 'apiTermOverview', 'apiEvaluationProgress', 'apiQualityCheck'];
+// หมายเหตุ: apiListRoles/apiListEvaluators ขึ้นต้นด้วย apiList จึงถูกแคชอ่านอัตโนมัติอยู่แล้ว
 const readCache = new Map();
 
 function isReadCall(fnName) {

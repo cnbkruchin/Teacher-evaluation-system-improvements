@@ -7,12 +7,8 @@ const PREFIX_LIST = ['นาย', 'นาง', 'นางสาว', 'ว่า�
 const LEVEL_LIST = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 const DAY_LIST = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'];
 const DUTY_POSITION_LIST = ['หัวหน้าเวร', 'รองหัวหน้าเวร', 'กรรมการเวร'];
-const ROLE_LIST = [
-  'รองผู้อำนวยการฝ่ายกิจการนักเรียน',
-  'หัวหน้ากลุ่มบริหารงานกิจการนักเรียน',
-  'หัวหน้าระดับชั้น',
-  'หัวหน้าเวรประจำวัน'
-];
+/* บทบาทผู้ประเมินไม่ได้ฝังไว้ในหน้าจอแล้ว — โหลดจากระบบผ่าน apiListEvaluators
+   เพื่อให้ผู้ดูแลเพิ่มบทบาทใหม่ได้เองโดยไม่ต้องแก้โค้ด */
 
 /* ==================== ครูผู้รับการประเมิน ==================== */
 
@@ -384,10 +380,59 @@ Admin.importTeachers = function () {
 /* ==================== ผู้ประเมิน ==================== */
 
 App.pages.evaluators = async function (container) {
-  const rows = await api('apiListEvaluators', App.session.token);
-  Admin.cache.evaluators = rows;
+  const data = await api('apiListEvaluators', App.session.token);
+  Admin.cache.evaluators = data.rows;
+  Admin.cache.roles = data.roles;
+  Admin.cache.roleTeachers = data.teachers;
+  Admin.cache.scopeTypes = data.scopeTypes;
+
+  const rows = data.rows;
+  const activeRoles = data.roles.filter(function (r) { return r.status === 'ใช้งาน'; });
+  const orphan = rows.filter(function (e) { return e.roleMissing; });
 
   container.innerHTML =
+    (orphan.length
+      ? '<div class="alert alert--warn"><span>⚠️</span><span>ผู้ประเมิน ' + orphan.length +
+        ' คนใช้บทบาทที่ไม่มีอยู่ในรายการบทบาทแล้ว (' +
+        esc(orphan.map(function (e) { return e.role; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ')) +
+        ') จึงยังประเมินใครไม่ได้ — กรุณาเพิ่มบทบาทนั้น หรือแก้ไขบทบาทของผู้ประเมิน</span></div>'
+      : '') +
+
+    '<div class="card">' +
+      '<div class="card__head"><h3>🎭 บทบาทและขอบเขตการประเมิน</h3><div class="spacer"></div>' +
+        '<span class="badge badge--muted">' + activeRoles.length + '/' + data.maxRoles + ' บทบาท</span>' +
+        '<button class="btn btn--soft" onclick="Admin.editRole()">➕ เพิ่มบทบาท</button></div>' +
+      '<p class="card__desc">กำหนดได้เองว่าโรงเรียนมีบทบาทผู้ประเมินอะไรบ้าง ' +
+        'และแต่ละบทบาทประเมินครูกลุ่มใด — ไม่ต้องแก้โค้ด</p>' +
+      '<div class="table-wrap"><table><thead><tr>' +
+        '<th>บทบาท</th><th>ประเมินครูกลุ่มใด</th><th>ตัวเลือกขอบเขต</th>' +
+        '<th class="num">ผู้ประเมิน</th><th>สถานะ</th><th></th></tr></thead><tbody>' +
+        data.roles.map(function (r) {
+          return '<tr><td><b>' + esc(r.name) + '</b>' +
+              (r.builtIn ? ' <span class="badge badge--muted">มาตรฐาน</span>' : '') +
+              (r.description ? '<div class="small muted">' + esc(r.description) + '</div>' : '') + '</td>' +
+            '<td><span class="badge badge--brand">' + esc(r.scopeType) + '</span></td>' +
+            '<td class="small">' + (r.needsScope
+              ? (r.scopeOptions.length
+                  ? r.scopeOptions.slice(0, 8).map(function (o) {
+                      return '<span class="badge badge--muted">' + esc(o) + '</span>';
+                    }).join(' ') + (r.scopeOptions.length > 8 ? ' <span class="muted">+' + (r.scopeOptions.length - 8) + '</span>' : '')
+                  : '<span class="muted">ยังไม่มีตัวเลือก — พิมพ์เพิ่มได้ตอนเพิ่มผู้ประเมิน</span>')
+              : '<span class="muted">ไม่ต้องระบุ</span>') + '</td>' +
+            '<td class="num">' + r.evaluatorCount + '</td>' +
+            '<td><span class="badge ' + (r.status === 'ใช้งาน' ? 'badge--ok' : 'badge--muted') + '">' + esc(r.status) + '</span></td>' +
+            '<td><div class="btn-row">' +
+              '<button class="btn btn--ghost btn--sm" onclick="Admin.editRole(\'' + jsAttr(r.key) + '\')">แก้ไข</button>' +
+              '<button class="btn btn--ghost btn--sm" onclick="Admin.toggleRole(\'' + jsAttr(r.key) + '\')">' +
+                (r.status === 'ใช้งาน' ? 'ปิดใช้' : 'เปิดใช้') + '</button>' +
+              (r.evaluatorCount === 0
+                ? '<button class="btn btn--danger btn--sm" onclick="Admin.deleteRole(\'' + jsAttr(r.key) + '\',\'' + jsAttr(r.name) + '\')">ลบ</button>'
+                : '') +
+            '</div></td></tr>';
+        }).join('') +
+      '</tbody></table></div>' +
+    '</div>' +
+
     '<div class="card">' +
       '<div class="card__head"><h3>👥 ผู้ประเมิน</h3><div class="spacer"></div>' +
         '<button class="btn" onclick="Admin.editEvaluator()">➕ เพิ่มผู้ประเมิน</button></div>' +
@@ -403,7 +448,9 @@ App.pages.evaluators = async function (container) {
               (e.mustChangePassword ? ' <span class="badge badge--warn">ยังไม่เปลี่ยนรหัสผ่าน</span>' : '') +
               (e.locked ? ' <span class="badge badge--danger">ถูกล็อก</span>' : '') +
               (e.email ? '<div class="small muted">' + esc(e.email) + '</div>' : '') + '</td>' +
-            '<td class="small">' + esc(e.role) + '</td><td>' + esc(e.scope || '-') + '</td>' +
+            '<td class="small">' + esc(e.role) +
+              (e.roleMissing ? ' <span class="badge badge--danger">ไม่พบบทบาท</span>' : '') + '</td>' +
+            '<td class="small">' + esc(Admin.scopeLabel(e)) + '</td>' +
             '<td class="num">' + e.responsibleCount + '</td>' +
             '<td class="small muted">' + esc(e.lastLogin || 'ยังไม่เคยเข้า') + '</td>' +
             '<td><span class="badge ' + (e.status === 'ใช้งาน' ? 'badge--ok' : 'badge--muted') + '">' + esc(e.status) + '</span></td>' +
@@ -420,10 +467,135 @@ App.pages.evaluators = async function (container) {
     '</div>';
 };
 
-Admin.editEvaluator = function (id) {
-  const e = id ? (Admin.cache.evaluators || []).filter(function (x) { return x.id === id; })[0] : null;
+/** ข้อความขอบเขตที่อ่านง่ายในตาราง (ขอบเขตแบบเลือกครูเองอาจยาวมาก) */
+Admin.scopeLabel = function (e) {
+  if (!e.scope) return '-';
+  if (e.scopeType === (Admin.cache.scopeTypes || {}).TEACHERS) {
+    const ids = e.scope.split(',').map(function (x) { return x.trim(); }).filter(String);
+    const names = ids.map(function (id) {
+      const t = (Admin.cache.roleTeachers || []).filter(function (x) { return x.id === id || x.name === id; })[0];
+      return t ? t.name : id;
+    });
+    return names.length <= 2 ? names.join(', ') : names.slice(0, 2).join(', ') + ' และอีก ' + (names.length - 2) + ' คน';
+  }
+  return e.scope;
+};
+
+Admin.roleByKey = function (key) {
+  return (Admin.cache.roles || []).filter(function (r) { return r.key === key; })[0] || null;
+};
+Admin.roleByName = function (name) {
+  return (Admin.cache.roles || []).filter(function (r) { return r.name === name; })[0] || null;
+};
+
+/* ---------- บทบาท ---------- */
+
+Admin.editRole = function (key) {
+  const r = key ? Admin.roleByKey(key) : null;
+  const types = Admin.cache.scopeTypes || {};
+  const typeList = Object.keys(types).map(function (k) { return types[k]; });
 
   modal({
+    title: r ? '✏️ แก้ไขบทบาท' : '➕ เพิ่มบทบาทผู้ประเมิน',
+    body:
+      '<div class="field"><label>ชื่อบทบาท *</label>' +
+        '<input type="text" id="rlName" value="' + esc(r ? r.name : '') + '" ' +
+        'placeholder="เช่น หัวหน้างานระบบดูแลช่วยเหลือนักเรียน"></div>' +
+      '<div class="field"><label>ประเมินครูกลุ่มใด *</label>' +
+        '<select id="rlScopeType" onchange="Admin.onScopeTypeChange()">' +
+        optionsHtml(typeList, r ? r.scopeType : types.ALL) + '</select>' +
+        '<div class="hint" id="rlScopeHint"></div></div>' +
+      '<div class="field" id="rlOptionsField"><label>ตัวเลือกขอบเขตที่กำหนดเอง</label>' +
+        '<input type="text" id="rlOptions" value="' + esc(r ? r.extraOptions.join(', ') : '') + '" ' +
+        'placeholder="คั่นด้วยเครื่องหมายจุลภาค เช่น ม.7, ม.8">' +
+        '<div class="hint">เว้นว่างได้ — ระบบจะรวมค่าที่มีอยู่จริงในทะเบียนครูมาให้เลือกอยู่แล้ว ' +
+        'และจะจำค่าใหม่ที่พิมพ์ตอนเพิ่มผู้ประเมินให้อัตโนมัติ</div></div>' +
+      '<div class="field"><label>คำอธิบาย</label>' +
+        '<input type="text" id="rlDesc" value="' + esc(r ? r.description : '') + '"></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="field"><label>ลำดับการแสดง</label>' +
+          '<input type="number" id="rlOrder" min="1" max="99" value="' +
+          (r ? r.order : ((Admin.cache.roles || []).length + 1)) + '"></div>' +
+        '<div class="field"><label>สถานะ</label><select id="rlStatus">' +
+          optionsHtml(['ใช้งาน', 'ไม่ใช้งาน'], r ? r.status : 'ใช้งาน') + '</select></div>' +
+      '</div>',
+    footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button>' +
+      '<button class="btn" id="btnSaveRole">💾 บันทึก</button>',
+    onOpen: function (wrap, close) {
+      Admin.onScopeTypeChange();
+      wrap.querySelector('#btnSaveRole').onclick = async function () {
+        try {
+          await apiWithButton(this, 'apiSaveRole', App.session.token, {
+            key: r ? r.key : '',
+            name: wrap.querySelector('#rlName').value.trim(),
+            scopeType: wrap.querySelector('#rlScopeType').value,
+            extraOptions: wrap.querySelector('#rlOptions').value
+              .split(',').map(function (x) { return x.trim(); }).filter(Boolean),
+            description: wrap.querySelector('#rlDesc').value.trim(),
+            order: Number(wrap.querySelector('#rlOrder').value),
+            status: wrap.querySelector('#rlStatus').value
+          });
+          close();
+          toast(r ? 'บันทึกบทบาทเรียบร้อย' : 'เพิ่มบทบาทเรียบร้อย', 'ok');
+          App.go('evaluators');
+        } catch (err) { toast(err.message, 'danger'); }
+      };
+    }
+  });
+};
+
+Admin.SCOPE_HINTS = {
+  'ทุกคน': 'ประเมินครูได้ทุกคน ไม่ต้องระบุขอบเขตเมื่อเพิ่มผู้ประเมิน',
+  'ระดับชั้น': 'ประเมินเฉพาะครูที่ปรึกษาของระดับชั้นที่รับผิดชอบ',
+  'เวรประจำวัน': 'ประเมินเฉพาะครูที่อยู่เวรวันเดียวกัน ตามตารางเวรของภาคเรียนนั้น',
+  'กลุ่มสาระ/ฝ่าย': 'ประเมินเฉพาะครูในกลุ่มสาระหรือฝ่ายเดียวกัน',
+  'เลือกครูเอง': 'ผู้ดูแลเลือกรายชื่อครูที่ประเมินได้เป็นรายคน เหมาะกับคณะกรรมการเฉพาะกิจ'
+};
+
+Admin.onScopeTypeChange = function () {
+  const type = document.getElementById('rlScopeType').value;
+  const hint = document.getElementById('rlScopeHint');
+  const optionsField = document.getElementById('rlOptionsField');
+  if (hint) hint.textContent = Admin.SCOPE_HINTS[type] || '';
+  if (optionsField) {
+    const types = Admin.cache.scopeTypes || {};
+    optionsField.style.display = (type === types.ALL || type === types.TEACHERS) ? 'none' : '';
+  }
+};
+
+Admin.toggleRole = async function (key) {
+  try {
+    const res = await api('apiToggleRole', App.session.token, key);
+    toast(res.status === 'ใช้งาน' ? 'เปิดใช้งานบทบาทแล้ว' : 'ปิดใช้งานบทบาทแล้ว', 'ok');
+    App.go('evaluators');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+Admin.deleteRole = async function (key, name) {
+  const yes = await confirmDialog({
+    title: '🗑️ ลบบทบาท', message: 'ต้องการลบบทบาท "' + name + '" ใช่หรือไม่?',
+    warning: 'ลบได้เฉพาะบทบาทที่ยังไม่มีผู้ประเมินและยังไม่เคยมีผลการประเมิน ' +
+      'หากเคยใช้งานแล้วให้เปลี่ยนสถานะเป็น "ไม่ใช้งาน" แทน',
+    confirmText: 'ลบบทบาท', danger: true
+  });
+  if (!yes) return;
+  try {
+    await api('apiDeleteRole', App.session.token, key);
+    toast('ลบบทบาทเรียบร้อย', 'ok');
+    App.go('evaluators');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+/* ---------- ผู้ประเมิน ---------- */
+
+Admin.editEvaluator = function (id) {
+  const e = id ? (Admin.cache.evaluators || []).filter(function (x) { return x.id === id; })[0] : null;
+  const roles = (Admin.cache.roles || []).filter(function (r) {
+    return r.status === 'ใช้งาน' || (e && e.role === r.name);
+  });
+
+  modal({
+    wide: true,
     title: e ? '✏️ แก้ไขผู้ประเมิน' : '➕ เพิ่มผู้ประเมิน',
     body:
       '<div class="grid grid-2">' +
@@ -433,31 +605,95 @@ Admin.editEvaluator = function (id) {
           '<input type="email" id="gEmail" value="' + esc(e ? e.email : '') + '"></div>' +
         '<div class="field"><label>ชื่อ *</label><input type="text" id="gFirst" value="' + esc(e ? e.firstName : '') + '"></div>' +
         '<div class="field"><label>นามสกุล *</label><input type="text" id="gLast" value="' + esc(e ? e.lastName : '') + '"></div>' +
-        '<div class="field full"><label>บทบาท *</label><select id="gRole" onchange="Admin.onRoleChange()">' +
-          '<option value="">-- เลือกบทบาท --</option>' + optionsHtml(ROLE_LIST, e ? e.role : '') + '</select></div>' +
-        '<div class="field" id="gScopeField" style="display:none"><label id="gScopeLabel">ขอบเขต</label>' +
-          '<select id="gScope"></select></div>' +
-        '<div class="field"><label>สถานะ</label><select id="gStatus">' +
-          optionsHtml(['ใช้งาน', 'ไม่ใช้งาน'], e ? e.status : 'ใช้งาน') + '</select></div>' +
-      '</div>',
+      '</div>' +
+
+      '<div class="field"><label>บทบาท *</label>' +
+        '<select id="gRole" onchange="Admin.onRoleChange()">' +
+          '<option value="">-- เลือกบทบาท --</option>' +
+          roles.map(function (r) {
+            return '<option value="' + esc(r.name) + '"' + (e && e.role === r.name ? ' selected' : '') + '>' +
+              esc(r.name) + ' · ' + esc(r.scopeType) + '</option>';
+          }).join('') +
+          '<option value="__new__">➕ เพิ่มบทบาทใหม่...</option>' +
+        '</select>' +
+        '<div class="hint" id="gRoleHint"></div></div>' +
+
+      '<div id="gNewRoleBox" class="group-row" style="display:none">' +
+        '<div class="grid grid-2">' +
+          '<div class="field"><label>ชื่อบทบาทใหม่ *</label>' +
+            '<input type="text" id="gNewRoleName" placeholder="เช่น หัวหน้างานระบบดูแลช่วยเหลือนักเรียน"></div>' +
+          '<div class="field"><label>ประเมินครูกลุ่มใด *</label>' +
+            '<select id="gNewRoleScope" onchange="Admin.onRoleChange()">' +
+            optionsHtml(Object.keys(Admin.cache.scopeTypes || {}).map(function (k) {
+              return (Admin.cache.scopeTypes || {})[k];
+            }), (Admin.cache.scopeTypes || {}).ALL) + '</select></div>' +
+        '</div>' +
+        '<div class="hint" id="gNewRoleHint"></div>' +
+      '</div>' +
+
+      '<div class="field" id="gScopeField" style="display:none">' +
+        '<label id="gScopeLabel">ขอบเขต</label>' +
+        '<div class="inline" style="gap:8px;align-items:flex-start;flex-wrap:wrap">' +
+          '<select id="gScope" style="flex:1;min-width:180px"></select>' +
+          '<button type="button" class="btn btn--soft btn--sm" id="gScopeAdd">➕ ระบุเอง</button>' +
+        '</div>' +
+        '<input type="text" id="gScopeNew" class="hidden" style="margin-top:8px" ' +
+          'placeholder="พิมพ์ขอบเขตใหม่ แล้วระบบจะจำไว้ให้เลือกครั้งต่อไป">' +
+        '<div class="hint" id="gScopeHint"></div>' +
+      '</div>' +
+
+      '<div class="field" id="gTeacherField" style="display:none">' +
+        '<label>ครูที่ผู้ประเมินคนนี้รับผิดชอบ *</label>' +
+        '<input type="text" id="gTeacherSearch" placeholder="🔍 ค้นหาชื่อครู" style="margin-bottom:8px">' +
+        '<div class="checklist scroll-y" id="gTeacherList" style="max-height:230px"></div>' +
+        '<div class="hint" id="gTeacherCount"></div>' +
+      '</div>' +
+
+      '<div class="field"><label>สถานะ</label><select id="gStatus">' +
+        optionsHtml(['ใช้งาน', 'ไม่ใช้งาน'], e ? e.status : 'ใช้งาน') + '</select></div>',
     footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnSaveEvaluator">💾 บันทึก</button>',
     onOpen: function (wrap, close) {
-      Admin.onRoleChange(e ? e.scope : '');
+      Admin.editingEvaluator = e || null;
+      Admin.onRoleChange();
+
+      wrap.querySelector('#gScopeAdd').onclick = function () {
+        const input = wrap.querySelector('#gScopeNew');
+        input.classList.toggle('hidden');
+        if (!input.classList.contains('hidden')) input.focus();
+        else input.value = '';
+      };
+      wrap.querySelector('#gTeacherSearch').oninput = debounce(function () {
+        Admin.renderScopeTeachers(this.value);
+      }, 180);
+
       wrap.querySelector('#btnSaveEvaluator').onclick = async function () {
+        const payload = {
+          id: e ? e.id : '',
+          prefix: wrap.querySelector('#gPrefix').value,
+          firstName: wrap.querySelector('#gFirst').value.trim(),
+          lastName: wrap.querySelector('#gLast').value.trim(),
+          email: wrap.querySelector('#gEmail').value.trim(),
+          status: wrap.querySelector('#gStatus').value,
+          scope: Admin.currentScopeValue()
+        };
+        const selected = wrap.querySelector('#gRole').value;
+        if (selected === '__new__') {
+          payload.newRole = {
+            name: wrap.querySelector('#gNewRoleName').value.trim(),
+            scopeType: wrap.querySelector('#gNewRoleScope').value,
+            description: ''
+          };
+          if (!payload.newRole.name) { toast('กรุณากรอกชื่อบทบาทใหม่', 'warn'); return; }
+        } else {
+          payload.role = selected;
+        }
+
         try {
-          const res = await apiWithButton(this, 'apiSaveEvaluator', App.session.token, {
-            id: e ? e.id : '',
-            prefix: wrap.querySelector('#gPrefix').value,
-            firstName: wrap.querySelector('#gFirst').value.trim(),
-            lastName: wrap.querySelector('#gLast').value.trim(),
-            role: wrap.querySelector('#gRole').value,
-            scope: wrap.querySelector('#gScope').value,
-            email: wrap.querySelector('#gEmail').value.trim(),
-            status: wrap.querySelector('#gStatus').value
-          });
+          const res = await apiWithButton(this, 'apiSaveEvaluator', App.session.token, payload);
           close();
           if (res && res.password) Admin.showPassword(res.name, res.password, res.emailSent);
           else toast('บันทึกข้อมูลผู้ประเมินเรียบร้อย', 'ok');
+          if (res && res.learnedScope) toast('เพิ่มขอบเขต "' + payload.scope + '" เข้ารายการของบทบาทแล้ว', 'ok', 6000);
           App.go('evaluators');
         } catch (err) { toast(err.message, 'danger'); }
       };
@@ -465,25 +701,144 @@ Admin.editEvaluator = function (id) {
   });
 };
 
-Admin.onRoleChange = function (preset) {
-  const role = document.getElementById('gRole').value;
-  const field = document.getElementById('gScopeField');
-  const select = document.getElementById('gScope');
-  const label = document.getElementById('gScopeLabel');
-
-  if (role === 'หัวหน้าระดับชั้น') {
-    field.style.display = '';
-    label.textContent = 'ระดับชั้นที่รับผิดชอบ *';
-    select.innerHTML = '<option value="">-- เลือกระดับชั้น --</option>' + optionsHtml(LEVEL_LIST, preset || '');
-  } else if (role === 'หัวหน้าเวรประจำวัน') {
-    field.style.display = '';
-    label.textContent = 'วันเวรที่รับผิดชอบ *';
-    select.innerHTML = '<option value="">-- เลือกวัน --</option>' +
-      optionsHtml(DAY_LIST, preset || '', function (d) { return { value: d, label: 'วัน' + d }; });
-  } else {
-    field.style.display = 'none';
-    select.innerHTML = '<option value=""></option>';
+/** ค่าขอบเขตที่ผู้ใช้เลือกอยู่ (รองรับทั้งเลือกจากรายการ พิมพ์เอง และเลือกครูรายคน) */
+Admin.currentScopeValue = function () {
+  const types = Admin.cache.scopeTypes || {};
+  const role = Admin.selectedRoleShape();
+  if (!role || role.scopeType === types.ALL) return '';
+  if (role.scopeType === types.TEACHERS) {
+    return Array.prototype.slice.call(document.querySelectorAll('.gTeacherPick:checked'))
+      .map(function (x) { return x.value; }).join(', ');
   }
+  const typed = document.getElementById('gScopeNew');
+  if (typed && !typed.classList.contains('hidden') && typed.value.trim()) return typed.value.trim();
+  const select = document.getElementById('gScope');
+  return select ? select.value : '';
+};
+
+/**
+ * ตัวเลือกขอบเขตตั้งต้นของบทบาทที่ยังไม่ได้สร้าง
+ * รวมค่ามาตรฐานกับค่าที่มีอยู่จริงในทะเบียนครู เพื่อให้บทบาทใหม่มีตัวเลือกให้เลือกทันที
+ */
+Admin.defaultScopeOptions = function (scopeType) {
+  const types = Admin.cache.scopeTypes || {};
+  const teachers = Admin.cache.roleTeachers || [];
+  const out = [];
+  const add = function (v) { if (v && out.indexOf(v) === -1) out.push(v); };
+
+  if (scopeType === types.LEVEL) {
+    LEVEL_LIST.forEach(add);
+    teachers.forEach(function (t) { add(t.level); });
+  } else if (scopeType === types.DAY) {
+    DAY_LIST.forEach(add);
+    teachers.forEach(function (t) { add(t.dutyDay); });
+  } else if (scopeType === types.DEPARTMENT) {
+    teachers.forEach(function (t) { add(t.department); });
+  }
+  return out;
+};
+
+/** บทบาทที่กำลังเลือกอยู่ในฟอร์ม (บทบาทเดิม หรือบทบาทใหม่ที่กำลังกรอก) */
+Admin.selectedRoleShape = function () {
+  const select = document.getElementById('gRole');
+  if (!select) return null;
+  if (select.value === '__new__') {
+    const scopeType = (document.getElementById('gNewRoleScope') || {}).value;
+    return {
+      name: '', scopeType: scopeType,
+      scopeOptions: Admin.defaultScopeOptions(scopeType),
+      needsScope: scopeType !== (Admin.cache.scopeTypes || {}).ALL
+    };
+  }
+  return Admin.roleByName(select.value);
+};
+
+Admin.onRoleChange = function () {
+  const types = Admin.cache.scopeTypes || {};
+  const select = document.getElementById('gRole');
+  const newBox = document.getElementById('gNewRoleBox');
+  const isNew = select.value === '__new__';
+  if (newBox) newBox.style.display = isNew ? '' : 'none';
+
+  const role = Admin.selectedRoleShape();
+  const roleHint = document.getElementById('gRoleHint');
+  const newHint = document.getElementById('gNewRoleHint');
+  const hintText = role ? (Admin.SCOPE_HINTS[role.scopeType] || '') : '';
+  if (roleHint) roleHint.textContent = isNew ? '' : hintText;
+  if (newHint) newHint.textContent = isNew ? hintText : '';
+
+  const scopeField = document.getElementById('gScopeField');
+  const teacherField = document.getElementById('gTeacherField');
+  const label = document.getElementById('gScopeLabel');
+  const scopeSelect = document.getElementById('gScope');
+  const scopeHint = document.getElementById('gScopeHint');
+  const e = Admin.editingEvaluator;
+  const preset = (e && role && e.role === role.name) ? e.scope : '';
+
+  scopeField.style.display = 'none';
+  teacherField.style.display = 'none';
+  if (!role || role.scopeType === types.ALL) return;
+
+  if (role.scopeType === types.TEACHERS) {
+    teacherField.style.display = '';
+    Admin.scopeTeacherPreset = preset
+      ? preset.split(',').map(function (x) { return x.trim(); }).filter(Boolean) : [];
+    Admin.renderScopeTeachers('');
+    return;
+  }
+
+  scopeField.style.display = '';
+  const labels = {};
+  labels[types.LEVEL] = 'ระดับชั้นที่รับผิดชอบ *';
+  labels[types.DAY] = 'วันเวรที่รับผิดชอบ *';
+  labels[types.DEPARTMENT] = 'กลุ่มสาระ/ฝ่ายที่รับผิดชอบ *';
+  label.textContent = labels[role.scopeType] || 'ขอบเขต *';
+
+  const options = (role.scopeOptions || []).slice();
+  if (preset && options.indexOf(preset) === -1) options.push(preset);
+  scopeSelect.innerHTML = '<option value="">-- เลือก --</option>' +
+    optionsHtml(options, preset, function (o) {
+      return { value: o, label: role.scopeType === types.DAY ? 'วัน' + o : o };
+    });
+  if (scopeHint) {
+    scopeHint.textContent = options.length
+      ? 'ไม่มีตัวเลือกที่ต้องการ? กด "➕ ระบุเอง" แล้วพิมพ์ได้เลย ระบบจะจำไว้ให้ครั้งต่อไป'
+      : 'ยังไม่มีตัวเลือก — กด "➕ ระบุเอง" เพื่อพิมพ์ขอบเขตแรก';
+  }
+};
+
+/** รายชื่อครูให้เลือกสำหรับบทบาทแบบ "เลือกครูเอง" */
+Admin.renderScopeTeachers = function (keyword) {
+  const host = document.getElementById('gTeacherList');
+  if (!host) return;
+  const k = (keyword || '').toLowerCase();
+  const picked = Admin.scopeTeacherPreset || [];
+  const list = (Admin.cache.roleTeachers || []).filter(function (t) {
+    return !k || t.name.toLowerCase().indexOf(k) !== -1;
+  });
+
+  host.innerHTML = list.length ? list.map(function (t) {
+    const on = picked.indexOf(t.id) !== -1 || picked.indexOf(t.name) !== -1;
+    return '<label class="checkbox"><input type="checkbox" class="gTeacherPick" value="' + esc(t.id) + '"' +
+      (on ? ' checked' : '') + '><span>' + esc(t.name) +
+      '<div class="small muted">' + esc(t.level || 'ไม่ระบุระดับชั้น') +
+      ' · เวร' + esc(t.dutyDay || 'ไม่ระบุ') + '</div></span></label>';
+  }).join('') : '<div class="small muted" style="padding:8px 0">ไม่พบครูตามคำค้นหา</div>';
+
+  host.querySelectorAll('.gTeacherPick').forEach(function (el) {
+    el.onchange = function () {
+      const at = Admin.scopeTeacherPreset.indexOf(this.value);
+      if (this.checked && at === -1) Admin.scopeTeacherPreset.push(this.value);
+      if (!this.checked && at !== -1) Admin.scopeTeacherPreset.splice(at, 1);
+      Admin.updateScopeTeacherCount();
+    };
+  });
+  Admin.updateScopeTeacherCount();
+};
+
+Admin.updateScopeTeacherCount = function () {
+  const box = document.getElementById('gTeacherCount');
+  if (box) box.textContent = 'เลือกไว้ ' + (Admin.scopeTeacherPreset || []).length + ' คน';
 };
 
 Admin.showPassword = function (name, password, emailSent) {

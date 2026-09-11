@@ -696,7 +696,7 @@ check('คะแนนเต็มต่อข้อผิดช่วง → �
 check('ชุดใหม่ได้กลุ่มผู้ประเมินมาตรฐานมาให้', loadSetGroups_(SET2).length === 4);
 
 // --- กำหนดผู้ประเมินของชุดอย่างอิสระ ---
-const evaluatorList = apiListEvaluators(T2).data;
+const evaluatorList = apiListEvaluators(T2).data.rows;
 const viceDir = evaluatorList.filter(e => e.role === ROLES.VICE_DIRECTOR)[0];
 const headLv1 = evaluatorList.filter(e => e.role === ROLES.HEAD_LEVEL)[0];
 
@@ -960,7 +960,141 @@ check('คำนวณคะแนนเต็มรวมของทุกช�
 // คืนค่าภาคเรียนปัจจุบันให้การทดสอบถัดไป
 setSettings_({ current_academic_year: YEAR, current_semester: '1' });
 
-/* ---------- 19. ตรวจสุขภาพระบบ ---------- */
+/* ---------- 19. บทบาทและขอบเขตของผู้ประเมินที่เพิ่มเองได้ ---------- */
+section('บทบาทและขอบเขตของผู้ประเมิน (เพิ่ม/แก้ไขได้จากหน้าจอ)');
+
+check('มีชีทบทบาทผู้ประเมิน', sheetExists_(SHEETS.ROLES));
+check('สร้างบทบาทเริ่มต้น 4 บทบาท', loadRoles_().length === 4, loadRoles_().length);
+check('บทบาทมาตรฐานมีประเภทขอบเขตถูกต้อง',
+  roleByName_(ROLES.VICE_DIRECTOR).scopeType === SCOPE_TYPES.ALL &&
+  roleByName_(ROLES.HEAD_LEVEL).scopeType === SCOPE_TYPES.LEVEL &&
+  roleByName_(ROLES.HEAD_DUTY).scopeType === SCOPE_TYPES.DAY,
+  loadRoles_().map(r => r.scopeType));
+check('แปลงชื่อบทบาท → รหัสได้', roleKey_(ROLES.HEAD_DUTY) === 'HEAD_DUTY');
+check('บทบาทที่ไม่มีอยู่ → คืนค่าว่าง', roleKey_('บทบาทที่ไม่มีจริง') === '');
+
+const rolesPage = apiListRoles(T2);
+check('เปิดหน้าบทบาทได้', rolesPage.success === true, rolesPage.message);
+check('หน้าบทบาทแสดงตัวเลือกขอบเขตของระดับชั้น',
+  rolesPage.data.roles.filter(r => r.key === 'HEAD_LEVEL')[0].scopeOptions.indexOf('ม.1') !== -1);
+check('บทบาทแบบ "ทุกคน" ไม่ต้องระบุขอบเขต',
+  rolesPage.data.roles.filter(r => r.key === 'VICE_DIRECTOR')[0].needsScope === false);
+
+// --- เพิ่มบทบาทใหม่แบบกลุ่มสาระ/ฝ่าย ---
+const newRole = apiSaveRole(T2, {
+  name: 'หัวหน้ากลุ่มสาระการเรียนรู้',
+  scopeType: SCOPE_TYPES.DEPARTMENT,
+  description: 'ประเมินครูในกลุ่มสาระเดียวกัน'
+});
+check('เพิ่มบทบาทใหม่ได้', newRole.success === true, newRole.message);
+check('บทบาทใหม่ได้รหัส ROL-xxxx', /^ROL-\d{4}$/.test(newRole.data.key), newRole.data.key);
+check('ชื่อบทบาทซ้ำ → ปฏิเสธ',
+  apiSaveRole(T2, { name: 'หัวหน้ากลุ่มสาระการเรียนรู้', scopeType: SCOPE_TYPES.ALL }).success === false);
+check('ไม่กรอกชื่อบทบาท → ปฏิเสธ', apiSaveRole(T2, { name: '', scopeType: SCOPE_TYPES.ALL }).success === false);
+check('ประเภทขอบเขตที่ไม่รู้จัก → ใช้ "ทุกคน" แทน',
+  normalizeScopeType_('อะไรก็ไม่รู้') === SCOPE_TYPES.ALL);
+
+// --- ผู้ประเมินที่ใช้บทบาทใหม่ ---
+const deptTeacher = apiListTeachers(T2, '', '', true).data[0];
+apiSaveTeacher(T2, {
+  id: deptTeacher.id, prefix: deptTeacher.prefix || 'นาย',
+  firstName: deptTeacher.firstName || 'สมชาย', lastName: deptTeacher.lastName || 'ใจดี',
+  level: deptTeacher.level, defaultDay: deptTeacher.defaultDay,
+  department: 'กลุ่มสาระคณิตศาสตร์', status: 'ใช้งาน'
+});
+const deptEval = apiSaveEvaluator(T2, {
+  prefix: 'นาย', firstName: 'หัวหน้า', lastName: 'คณิตศาสตร์',
+  role: 'หัวหน้ากลุ่มสาระการเรียนรู้', scope: 'กลุ่มสาระคณิตศาสตร์'
+});
+check('เพิ่มผู้ประเมินด้วยบทบาทใหม่ได้', deptEval.success === true, deptEval.message);
+check('ระบบจำขอบเขตใหม่ไว้ให้เลือกครั้งต่อไป',
+  roleByName_('หัวหน้ากลุ่มสาระการเรียนรู้').scopeOptions.indexOf('กลุ่มสาระคณิตศาสตร์') !== -1,
+  roleByName_('หัวหน้ากลุ่มสาระการเรียนรู้').scopeOptions);
+check('บทบาทแบบกลุ่มสาระกรองครูได้ถูกต้อง',
+  teachersForEvaluator_('หัวหน้ากลุ่มสาระการเรียนรู้', 'กลุ่มสาระคณิตศาสตร์', YEAR, '1')
+    .every(t => t.department === 'กลุ่มสาระคณิตศาสตร์'));
+check('บทบาทที่ต้องระบุขอบเขตแต่ไม่ระบุ → ปฏิเสธ',
+  apiSaveEvaluator(T2, {
+    prefix: 'นาง', firstName: 'ไม่ระบุ', lastName: 'ขอบเขต',
+    role: 'หัวหน้ากลุ่มสาระการเรียนรู้', scope: ''
+  }).success === false);
+
+// --- สร้างบทบาทใหม่พร้อมกับเพิ่มผู้ประเมินในครั้งเดียว ---
+const inline = apiSaveEvaluator(T2, {
+  prefix: 'นาง', firstName: 'หัวหน้า', lastName: 'ดูแลนักเรียน',
+  newRole: { name: 'หัวหน้างานระบบดูแลช่วยเหลือนักเรียน', scopeType: SCOPE_TYPES.ALL },
+  scope: ''
+});
+check('เพิ่มบทบาทใหม่พร้อมผู้ประเมินในครั้งเดียวได้', inline.success === true, inline.message);
+check('บทบาทที่สร้างพร้อมกันถูกบันทึกจริง',
+  !!roleByName_('หัวหน้างานระบบดูแลช่วยเหลือนักเรียน'));
+check('ผู้ประเมินบทบาทใหม่แบบ "ทุกคน" เห็นครูทุกคน',
+  teachersForEvaluator_('หัวหน้างานระบบดูแลช่วยเหลือนักเรียน', '', YEAR, '1').length ===
+  teachersWithDuty_(YEAR, '1', false).length);
+
+// --- บทบาทแบบเลือกครูเอง ---
+const pickRole = apiSaveRole(T2, { name: 'คณะกรรมการเฉพาะกิจ', scopeType: SCOPE_TYPES.TEACHERS });
+check('เพิ่มบทบาทแบบเลือกครูเองได้', pickRole.success === true, pickRole.message);
+const someTeachers = apiListTeachers(T2, '', '', true).data.slice(0, 2);
+const pickEval = apiSaveEvaluator(T2, {
+  prefix: 'นาย', firstName: 'กรรมการ', lastName: 'เฉพาะกิจ',
+  role: 'คณะกรรมการเฉพาะกิจ', scope: someTeachers.map(t => t.id).join(', ')
+});
+check('เพิ่มผู้ประเมินแบบเลือกครูเองได้', pickEval.success === true, pickEval.message);
+check('เห็นเฉพาะครูที่เลือกไว้',
+  teachersForEvaluator_('คณะกรรมการเฉพาะกิจ', someTeachers.map(t => t.id).join(', '), YEAR, '1').length === 2);
+check('รหัสครูที่ไม่มีอยู่ → ปฏิเสธ',
+  apiSaveEvaluator(T2, {
+    prefix: 'นาย', firstName: 'ผิด', lastName: 'รหัส',
+    role: 'คณะกรรมการเฉพาะกิจ', scope: 'TCH-9999'
+  }).success === false);
+
+// --- เปลี่ยนชื่อบทบาทต้องตามไปแก้ทุกที่ ---
+const renamed = apiSaveRole(T2, {
+  key: newRole.data.key, name: 'หัวหน้ากลุ่มสาระ', scopeType: SCOPE_TYPES.DEPARTMENT
+});
+check('เปลี่ยนชื่อบทบาทได้', renamed.success === true, renamed.message);
+check('ผู้ประเมินถูกอัปเดตเป็นชื่อบทบาทใหม่',
+  apiListEvaluators(T2).data.rows.some(e => e.role === 'หัวหน้ากลุ่มสาระ'));
+check('ไม่มีผู้ประเมินค้างอยู่กับชื่อบทบาทเดิม',
+  !apiListEvaluators(T2).data.rows.some(e => e.role === 'หัวหน้ากลุ่มสาระการเรียนรู้'));
+
+// --- ปิดใช้งาน / ลบบทบาท ---
+check('ปิดใช้งานบทบาทที่ยังมีผู้ประเมินใช้อยู่ไม่ได้',
+  apiToggleRole(T2, newRole.data.key).success === false);
+check('ลบบทบาทที่มีผู้ประเมินอยู่ไม่ได้',
+  apiDeleteRole(T2, newRole.data.key).success === false);
+
+const spareRole = apiSaveRole(T2, { name: 'บทบาทสำรองสำหรับทดสอบ', scopeType: SCOPE_TYPES.ALL });
+check('ปิดใช้งานบทบาทที่ยังไม่มีใครใช้ได้', apiToggleRole(T2, spareRole.data.key).success === true);
+check('บทบาทที่ปิดแล้วไม่อยู่ในรายการที่เปิดใช้',
+  !activeRoles_().some(r => r.key === spareRole.data.key));
+check('เพิ่มผู้ประเมินด้วยบทบาทที่ปิดใช้งาน → ปฏิเสธ',
+  apiSaveEvaluator(T2, {
+    prefix: 'นาย', firstName: 'ทดสอบ', lastName: 'ปิดบทบาท',
+    role: 'บทบาทสำรองสำหรับทดสอบ'
+  }).success === false);
+apiToggleRole(T2, spareRole.data.key);
+check('ลบบทบาทที่ไม่มีใครใช้ได้', apiDeleteRole(T2, spareRole.data.key).success === true);
+
+// --- บทบาทใช้ในชุดประเมินได้ ---
+const setWithNewRole = apiSaveSetGroups(T2, mainSet.id, [
+  { name: 'ผู้บริหารและหัวหน้ากลุ่มสาระ', type: GROUP_TYPES.ROLE,
+    members: [ROLES.VICE_DIRECTOR, 'หัวหน้ากลุ่มสาระ'], weight: 60 },
+  { name: 'หัวหน้าระดับชั้น', type: GROUP_TYPES.ROLE, members: [ROLES.HEAD_LEVEL], weight: 40 }
+]);
+check('ใช้บทบาทที่เพิ่มเองเป็นสมาชิกกลุ่มผู้ประเมินได้', setWithNewRole.success === true, setWithNewRole.message);
+check('กลุ่มเก็บสมาชิกบทบาทใหม่ไว้จริง',
+  loadSetGroups_(mainSet.id)[0].members.indexOf('หัวหน้ากลุ่มสาระ') !== -1,
+  loadSetGroups_(mainSet.id)[0].members);
+
+// คืนกลุ่มผู้ประเมินของชุดหลักให้เป็นแบบมาตรฐาน
+apiSaveSetGroups(T2, mainSet.id, Object.keys(ROLES).map(function (k, i) {
+  return { key: k, name: ROLES[k], type: GROUP_TYPES.ROLE, members: [ROLES[k]],
+    weight: [40, 30, 20, 10][i] };
+}));
+
+/* ---------- 20. ตรวจสุขภาพระบบ ---------- */
 section('ตรวจสุขภาพระบบ');
 const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);

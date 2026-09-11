@@ -258,29 +258,314 @@ function apiListEvaluators(token) {
           lastLogin: formatDate_(r['เข้าสู่ระบบล่าสุด']),
           failedAttempts: num_(r['จำนวนครั้งที่ผิด']),
           locked: !!(lockUntil && new Date(lockUntil).getTime() > Date.now()),
+          scopeType: (roleByName_(role) || {}).scopeType || '',
+          roleMissing: !roleByName_(role),
           responsibleCount: teachersForEvaluator_(role, scope, term.year, term.semester, allTeachers).length
         };
       });
-    return ok_(rows);
+    return ok_({
+      rows: rows,
+      roles: roleOptionList_(),
+      scopeTypes: SCOPE_TYPES,
+      maxRoles: MAX_ROLES,
+      prefixes: PREFIXES,
+      teachers: allTeachers.map(function (t) {
+        return { id: t.id, name: t.name, level: t.level, dutyDay: t.dutyDay, department: t.department };
+      })
+    });
   });
 }
 
+/** รายการบทบาทพร้อมตัวเลือกขอบเขต สำหรับใช้ในหน้าจอ */
+function roleOptionList_() {
+  const ctx = teacherScopeContext_();
+  const counts = {};
+  try {
+    readTable_(SHEETS.EVALUATORS).rows.forEach(function (r) {
+      const name = str_(r['บทบาท']);
+      if (name) counts[name] = (counts[name] || 0) + 1;
+    });
+  } catch (e) { /* ยังไม่มีผู้ประเมิน */ }
+
+  return loadRoles_().map(function (role) {
+    return {
+      key: role.key,
+      name: role.name,
+      scopeType: role.scopeType,
+      scopeOptions: roleScopeOptions_(role, ctx),
+      extraOptions: role.scopeOptions || [],
+      description: role.description,
+      order: role.order,
+      status: role.status,
+      builtIn: role.builtIn,
+      needsScope: role.scopeType !== SCOPE_TYPES.ALL,
+      evaluatorCount: counts[role.name] || 0
+    };
+  });
+}
+
+// ==================== บทบาทของผู้ประเมิน ====================
+
+/** ข้อมูลของหน้า "บทบาทและขอบเขต" */
+function apiListRoles(token) {
+  return guard_(function () {
+    requireAdmin_(token);
+    return ok_({
+      roles: roleOptionList_(),
+      scopeTypes: SCOPE_TYPES,
+      maxRoles: MAX_ROLES,
+      context: teacherScopeContext_()
+    });
+  });
+}
+
+function nextRoleKey_(existingKeys) {
+  return nextCode_('ROL', existingKeys || []);
+}
+
+/** สร้างหรือแก้ไขบทบาท */
+function apiSaveRole(token, data) {
+  return guard_(function () {
+    requireAdmin_(token);
+    const d = data || {};
+    const name = str_(d.name).substring(0, 120);
+    if (!name) return fail_('กรุณากรอกชื่อบทบาท');
+
+    const scopeType = normalizeScopeType_(d.scopeType);
+    const extraOptions = (d.extraOptions || []).map(function (x) { return str_(x); }).filter(String);
+
+    return withLock_(function () {
+      const table = readTable_(SHEETS.ROLES);
+      const key = str_(d.key);
+      let target = null;
+      table.rows.forEach(function (r) { if (str_(r['รหัสบทบาท']) === key) target = r; });
+
+      const duplicate = table.rows.filter(function (r) {
+        return str_(r['ชื่อบทบาท']) === name && str_(r['รหัสบทบาท']) !== key;
+      });
+      if (duplicate.length) return fail_('มีบทบาทชื่อ "' + name + '" อยู่แล้ว');
+
+      if (!target && table.rows.length >= MAX_ROLES) {
+        return fail_('สร้างบทบาทได้สูงสุด ' + MAX_ROLES + ' บทบาท');
+      }
+
+      const record = {
+        'ชื่อบทบาท': name,
+        'ประเภทขอบเขต': scopeType,
+        'ตัวเลือกขอบเขต': extraOptions.join(', '),
+        'คำอธิบาย': str_(d.description).substring(0, 300),
+        'ลำดับ': num_(d.order) || (table.rows.length + 1),
+        'สถานะ': str_(d.status) === STATUS.INACTIVE ? STATUS.INACTIVE : STATUS.ACTIVE
+      };
+
+      let savedKey = key;
+      let oldName = '';
+      if (target) {
+        oldName = str_(target['ชื่อบทบาท']);
+        updateRecord_(SHEETS.ROLES, target._row, record);
+      } else {
+        savedKey = nextRoleKey_(table.rows.map(function (r) { return str_(r['รหัสบทบาท']); }));
+        record['รหัสบทบาท'] = savedKey;
+        appendRecord_(SHEETS.ROLES, record);
+      }
+      invalidateTable_(SHEETS.ROLES);
+
+      // เปลี่ยนชื่อบทบาท → อัปเดตชื่อในทะเบียนผู้ประเมินและกลุ่มผู้ประเมินของชุดให้ตรงกัน
+      let renamed = 0;
+      if (oldName && oldName !== name) renamed = renameRoleEverywhere_(oldName, name);
+
+      logAction_('Admin', 'admin', target ? 'แก้ไขบทบาทผู้ประเมิน' : 'เพิ่มบทบาทผู้ประเมิน',
+        name + ' | ขอบเขต: ' + scopeType + (renamed ? ' | อัปเดตอ้างอิง ' + renamed + ' รายการ' : ''));
+      return ok_({ key: savedKey, name: name, scopeType: scopeType },
+        target ? 'บันทึกบทบาทเรียบร้อย' : 'เพิ่มบทบาท "' + name + '" เรียบร้อย');
+    });
+  });
+}
+
+/** เปลี่ยนชื่อบทบาทในทุกที่ที่อ้างถึง เพื่อไม่ให้ข้อมูลขาดการเชื่อมโยง */
+function renameRoleEverywhere_(oldName, newName) {
+  let count = 0;
+
+  const evaluators = readTable_(SHEETS.EVALUATORS);
+  const updates = [];
+  evaluators.rows.forEach(function (r) {
+    if (str_(r['บทบาท']) === oldName) updates.push({ row: r._row, patch: { 'บทบาท': newName } });
+  });
+  if (updates.length) { updateRecords_(SHEETS.EVALUATORS, updates); count += updates.length; }
+
+  // กลุ่มผู้ประเมินของชุดที่อ้างถึงบทบาทนี้
+  const groups = readTable_(SHEETS.SET_GROUPS);
+  const groupUpdates = [];
+  groups.rows.forEach(function (r) {
+    if (str_(r['ประเภท']) !== GROUP_TYPES.ROLE) return;
+    const members = parseMembers_(r['สมาชิก']);
+    if (members.indexOf(oldName) === -1) return;
+    const next = members.map(function (m) { return m === oldName ? newName : m; });
+    groupUpdates.push({ row: r._row, patch: { 'สมาชิก': next.join(', ') } });
+  });
+  if (groupUpdates.length) { updateRecords_(SHEETS.SET_GROUPS, groupUpdates); count += groupUpdates.length; }
+
+  // ผลการประเมินที่บันทึกชื่อบทบาทไว้
+  [SHEETS.RESULTS, SHEETS.ARCHIVE].forEach(function (sheetName) {
+    try {
+      const table = readTable_(sheetName);
+      const rowUpdates = [];
+      table.rows.forEach(function (r) {
+        if (str_(r['บทบาทผู้ประเมิน']) === oldName) {
+          rowUpdates.push({ row: r._row, patch: { 'บทบาทผู้ประเมิน': newName } });
+        }
+      });
+      if (rowUpdates.length) { updateRecords_(sheetName, rowUpdates); count += rowUpdates.length; }
+    } catch (e) { /* ไม่มีชีทนั้น */ }
+  });
+
+  return count;
+}
+
+/** เปิด/ปิดการใช้งานบทบาท */
+function apiToggleRole(token, roleKey) {
+  return guard_(function () {
+    requireAdmin_(token);
+    return withLock_(function () {
+      const table = readTable_(SHEETS.ROLES);
+      let target = null;
+      table.rows.forEach(function (r) { if (str_(r['รหัสบทบาท']) === str_(roleKey)) target = r; });
+      if (!target) return fail_('ไม่พบบทบาทนี้');
+
+      const next = str_(target['สถานะ']) === STATUS.INACTIVE ? STATUS.ACTIVE : STATUS.INACTIVE;
+      const name = str_(target['ชื่อบทบาท']);
+
+      if (next === STATUS.INACTIVE) {
+        const active = table.rows.filter(function (r) { return str_(r['สถานะ']) !== STATUS.INACTIVE; });
+        if (active.length <= 1) return fail_('ต้องมีบทบาทที่เปิดใช้งานอย่างน้อย 1 บทบาท');
+
+        const inUse = readTable_(SHEETS.EVALUATORS).rows.filter(function (r) {
+          return str_(r['บทบาท']) === name && str_(r['สถานะ']) !== STATUS.INACTIVE;
+        });
+        if (inUse.length) {
+          return fail_('ยังมีผู้ประเมินที่ใช้งานอยู่ในบทบาทนี้ ' + inUse.length + ' คน — ' +
+            'กรุณาย้ายบทบาทของผู้ประเมินหรือปิดใช้งานผู้ประเมินก่อน');
+        }
+      }
+
+      updateRecord_(SHEETS.ROLES, target._row, { 'สถานะ': next });
+      invalidateTable_(SHEETS.ROLES);
+      logAction_('Admin', 'admin', 'เปลี่ยนสถานะบทบาทผู้ประเมิน', name + ' → ' + next);
+      return ok_({ status: next },
+        next === STATUS.ACTIVE ? 'เปิดใช้งานบทบาทแล้ว' : 'ปิดใช้งานบทบาทแล้ว');
+    });
+  });
+}
+
+/** ลบบทบาท (ทำได้เฉพาะบทบาทที่ยังไม่มีใครใช้และไม่ถูกอ้างถึงในชุดประเมิน) */
+function apiDeleteRole(token, roleKey) {
+  return guard_(function () {
+    requireAdmin_(token);
+    return withLock_(function () {
+      const table = readTable_(SHEETS.ROLES);
+      if (table.rows.length <= 1) return fail_('ต้องมีบทบาทอย่างน้อย 1 บทบาท');
+
+      let target = null;
+      table.rows.forEach(function (r) { if (str_(r['รหัสบทบาท']) === str_(roleKey)) target = r; });
+      if (!target) return fail_('ไม่พบบทบาทนี้');
+
+      const name = str_(target['ชื่อบทบาท']);
+      const used = readTable_(SHEETS.EVALUATORS).rows.filter(function (r) {
+        return str_(r['บทบาท']) === name;
+      });
+      if (used.length) {
+        return fail_('มีผู้ประเมินใช้บทบาทนี้อยู่ ' + used.length + ' คน จึงลบไม่ได้ — ' +
+          'หากไม่ใช้แล้วให้เปลี่ยนสถานะเป็น "ไม่ใช้งาน" แทน');
+      }
+
+      const inResults = readTable_(SHEETS.RESULTS).rows.filter(function (r) {
+        return str_(r['บทบาทผู้ประเมิน']) === name;
+      });
+      if (inResults.length) {
+        return fail_('มีผลการประเมินที่บันทึกด้วยบทบาทนี้แล้ว ' + inResults.length + ' รายการ จึงลบไม่ได้ — ' +
+          'ให้เปลี่ยนสถานะเป็น "ไม่ใช้งาน" แทน เพื่อรักษาข้อมูลย้อนหลัง');
+      }
+
+      const inGroups = readTable_(SHEETS.SET_GROUPS).rows.filter(function (r) {
+        return str_(r['ประเภท']) === GROUP_TYPES.ROLE && parseMembers_(r['สมาชิก']).indexOf(name) !== -1;
+      });
+      if (inGroups.length) {
+        return fail_('บทบาทนี้ถูกใช้เป็นสมาชิกของกลุ่มผู้ประเมินในชุดประเมินอยู่ ' + inGroups.length +
+          ' กลุ่ม กรุณาแก้ไขกลุ่มผู้ประเมินก่อน');
+      }
+
+      deleteRecord_(SHEETS.ROLES, target._row);
+      invalidateTable_(SHEETS.ROLES);
+      logAction_('Admin', 'admin', 'ลบบทบาทผู้ประเมิน', name);
+      return ok_(null, 'ลบบทบาท "' + name + '" เรียบร้อย');
+    });
+  });
+}
+
+/** เพิ่มตัวเลือกขอบเขตใหม่เข้ากับบทบาท เพื่อให้ครั้งต่อไปเลือกจากรายการได้เลย */
+function rememberScopeOption_(role, scope) {
+  const value = str_(scope);
+  if (!role || !value) return false;
+  if (role.scopeType === SCOPE_TYPES.ALL || role.scopeType === SCOPE_TYPES.TEACHERS) return false;
+  if (roleScopeOptions_(role).indexOf(value) !== -1) return false;
+
+  const table = readTable_(SHEETS.ROLES);
+  let target = null;
+  table.rows.forEach(function (r) { if (str_(r['รหัสบทบาท']) === role.key) target = r; });
+  if (!target) return false;
+
+  const next = (role.scopeOptions || []).concat([value]);
+  updateRecord_(SHEETS.ROLES, target._row, { 'ตัวเลือกขอบเขต': next.join(', ') });
+  invalidateTable_(SHEETS.ROLES);
+  return true;
+}
+
+/**
+ * เพิ่มหรือแก้ไขผู้ประเมิน
+ *
+ * รองรับการ "สร้างบทบาทใหม่ไปพร้อมกัน" โดยส่ง newRole: {name, scopeType, description}
+ * และรองรับขอบเขตที่ยังไม่มีในรายการ — ระบบจะจำไว้ให้เลือกได้ในครั้งถัดไป
+ */
 function apiSaveEvaluator(token, data) {
   return guard_(function () {
     requireAdmin_(token);
     const d = data || {};
-    const firstName = str_(d.firstName), lastName = str_(d.lastName), role = str_(d.role);
+    const firstName = str_(d.firstName), lastName = str_(d.lastName);
     if (!firstName || !lastName) return fail_('กรุณากรอกชื่อและนามสกุล');
-    if (!role || !roleKey_(role)) return fail_('กรุณาเลือกบทบาทให้ถูกต้อง');
-
-    const scope = str_(d.scope);
-    const key = roleKey_(role);
-    if (SCOPED_ROLES.indexOf(key) !== -1 && !scope) {
-      return fail_(key === 'HEAD_LEVEL' ? 'กรุณาเลือกระดับชั้นที่รับผิดชอบ' : 'กรุณาเลือกวันเวรที่รับผิดชอบ');
-    }
-    if (key === 'HEAD_LEVEL' && LEVELS.indexOf(scope) === -1) return fail_('ระดับชั้นไม่ถูกต้อง');
-    if (key === 'HEAD_DUTY' && DAYS.indexOf(scope) === -1) return fail_('วันเวรไม่ถูกต้อง');
     if (d.email && !isValidEmail_(d.email)) return fail_('รูปแบบอีเมลไม่ถูกต้อง');
+
+    // ---- บทบาท: ใช้ที่มีอยู่ หรือสร้างใหม่ไปพร้อมกัน ----
+    let role = str_(d.role);
+    const newRole = d.newRole || null;
+    if (newRole && str_(newRole.name)) {
+      const created = apiSaveRole(token, {
+        name: newRole.name,
+        scopeType: newRole.scopeType,
+        description: newRole.description,
+        extraOptions: newRole.extraOptions || []
+      });
+      if (!created.success) return created;
+      role = created.data.name;
+    }
+    if (!role) return fail_('กรุณาเลือกบทบาทของผู้ประเมิน');
+
+    const roleDef = roleByName_(role);
+    if (!roleDef) return fail_('ไม่พบบทบาท "' + role + '" กรุณาเลือกจากรายการ หรือเพิ่มบทบาทใหม่');
+    if (roleDef.status === STATUS.INACTIVE) {
+      return fail_('บทบาท "' + role + '" ถูกปิดใช้งานอยู่ กรุณาเปิดใช้งานก่อน');
+    }
+
+    // ---- ขอบเขต: ตรวจตามประเภทของบทบาท ----
+    const scope = str_(d.scope);
+    if (roleDef.scopeType !== SCOPE_TYPES.ALL && !scope) {
+      return fail_(scopePromptOf_(roleDef));
+    }
+    if (roleDef.scopeType === SCOPE_TYPES.TEACHERS) {
+      const index = buildTeacherIndex_();
+      const wanted = parseMembers_(scope);
+      const unknown = wanted.filter(function (x) { return !index.byId[x] && !index.byName[x]; });
+      if (unknown.length) return fail_('ไม่พบครูรหัส/ชื่อ: ' + unknown.join(', '));
+    }
 
     const fullName = str_(d.prefix) + firstName + ' ' + lastName;
 
@@ -298,17 +583,22 @@ function apiSaveEvaluator(token, data) {
       const record = {
         'คำนำหน้า': str_(d.prefix), 'ชื่อ': firstName, 'นามสกุล': lastName,
         'ชื่อ-นามสกุล': fullName, 'บทบาท': role,
-        'ขอบเขต (ระดับชั้น/วัน)': SCOPED_ROLES.indexOf(key) !== -1 ? scope : '',
+        'ขอบเขต (ระดับชั้น/วัน)': roleDef.scopeType === SCOPE_TYPES.ALL ? '' : scope,
         'อีเมล': str_(d.email),
         'สถานะ': str_(d.status) || STATUS.ACTIVE
       };
+
+      // ขอบเขตที่ยังไม่เคยมี → เก็บไว้กับบทบาท ให้เลือกจากรายการได้ในครั้งถัดไป
+      const learned = rememberScopeOption_(roleDef, scope);
 
       if (target) {
         const oldName = str_(target['ชื่อ-นามสกุล']);
         updateRecord_(SHEETS.EVALUATORS, target._row, record);
         if (oldName && oldName !== fullName) syncEvaluatorName_(oldName, fullName);
-        logAction_('Admin', 'admin', 'แก้ไขผู้ประเมิน', fullName + ' (' + role + ')');
-        return ok_({ id: str_(target['รหัสผู้ประเมิน']), name: fullName }, 'บันทึกข้อมูลผู้ประเมินเรียบร้อย');
+        logAction_('Admin', 'admin', 'แก้ไขผู้ประเมิน',
+          fullName + ' (' + role + (scope ? ' - ' + scope : '') + ')');
+        return ok_({ id: str_(target['รหัสผู้ประเมิน']), name: fullName, role: role, learnedScope: learned },
+          'บันทึกข้อมูลผู้ประเมินเรียบร้อย');
       }
 
       // เพิ่มใหม่: สุ่มรหัสผ่านให้ และบังคับเปลี่ยนเมื่อเข้าใช้ครั้งแรก
@@ -327,10 +617,23 @@ function apiSaveEvaluator(token, data) {
       if (record['อีเมล']) emailSent = sendCredentialEmail_(record['อีเมล'], fullName, password, 'บัญชีผู้ประเมินใหม่');
 
       logAction_('Admin', 'admin', 'เพิ่มผู้ประเมิน', fullName + ' (' + role + (scope ? ' - ' + scope : '') + ')');
-      return ok_({ id: record['รหัสผู้ประเมิน'], name: fullName, password: password, emailSent: emailSent },
-        'เพิ่มผู้ประเมินเรียบร้อย');
+      return ok_({
+        id: record['รหัสผู้ประเมิน'], name: fullName, role: role,
+        password: password, emailSent: emailSent, learnedScope: learned
+      }, 'เพิ่มผู้ประเมินเรียบร้อย');
     });
   });
+}
+
+/** ข้อความแจ้งเตือนเมื่อยังไม่ได้ระบุขอบเขต ให้ตรงกับประเภทของบทบาท */
+function scopePromptOf_(role) {
+  switch (role.scopeType) {
+    case SCOPE_TYPES.LEVEL: return 'กรุณาเลือกระดับชั้นที่รับผิดชอบ';
+    case SCOPE_TYPES.DAY: return 'กรุณาเลือกวันเวรที่รับผิดชอบ';
+    case SCOPE_TYPES.DEPARTMENT: return 'กรุณาเลือกกลุ่มสาระ/ฝ่ายที่รับผิดชอบ';
+    case SCOPE_TYPES.TEACHERS: return 'กรุณาเลือกครูที่ผู้ประเมินคนนี้รับผิดชอบอย่างน้อย 1 คน';
+    default: return 'กรุณาระบุขอบเขตการประเมิน';
+  }
 }
 
 function syncEvaluatorName_(oldName, newName) {
@@ -665,7 +968,8 @@ function apiListCriteria(token, setId) {
           setId: set.id,
           name: str_(r['เกณฑ์การประเมิน']),
           groups: resolveCriteriaGroups_(roleText, groups),
-          roles: Object.keys(ROLES).filter(function (k) { return roleText.indexOf(ROLES[k]) !== -1; }),
+          roles: activeRoles_().filter(function (x) { return roleText.indexOf(x.name) !== -1; })
+            .map(function (x) { return x.key; }),
           weight: num_(r['น้ำหนัก (%)']),
           description: str_(r['คำอธิบาย']),
           status: str_(r['สถานะ']) || STATUS.ACTIVE
@@ -685,7 +989,7 @@ function apiListCriteria(token, setId) {
       groups: groups.map(function (g) {
         return { key: g.key, name: g.name, type: g.type, members: g.members, weight: g.weight };
       }),
-      roles: Object.keys(ROLES).map(function (k) { return { key: k, name: ROLES[k] }; }),
+      roles: activeRoles_().map(function (x) { return { key: x.key, name: x.name }; }),
       useWeights: !!set.useCriteriaWeights,
       weightTotal: rows.filter(function (r) { return r.status !== STATUS.INACTIVE; })
         .reduce(function (a, r) { return a + (Number(r.weight) || 0); }, 0),
@@ -712,7 +1016,8 @@ function apiSaveCriteria(token, item) {
     });
     if (!selected.length && (d.roles || []).length) {
       (d.roles || []).forEach(function (roleKey) {
-        const roleName = ROLES[roleKey];
+        const found = roleByKey_(roleKey);
+        const roleName = found ? found.name : '';
         if (!roleName) return;
         groups.forEach(function (g) {
           if (g.type === GROUP_TYPES.ROLE && g.members.indexOf(roleName) !== -1 && selected.indexOf(g.key) === -1) {

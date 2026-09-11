@@ -1,6 +1,7 @@
 /**
  * ============================================================================
  * ไฟล์: 04_Domain.gs  |  ตรรกะหลักของระบบ
+ *  - บทบาทของผู้ประเมินและขอบเขตการประเมิน (เพิ่ม/แก้ไขได้จากหน้าจอ)
  *  - ชุดประเมิน (แยกเกณฑ์/คะแนน/ผู้ประเมินออกเป็นชุด ๆ ได้อย่างอิสระ)
  *  - เกณฑ์การประเมิน (โหลดจากชีท แก้ไขได้โดยไม่ต้องแก้โค้ด)
  *  - การคำนวณคะแนน (ถ่วงน้ำหนัก + แปลงเป็นคะแนนที่หน่วยงานได้รับ)
@@ -110,6 +111,156 @@ function defaultSetId_() {
 /** ชุดที่ใช้จริง — คืนชุดที่ระบุ ถ้าไม่พบให้ใช้ชุดหลัก */
 function resolveSet_(setId) {
   return (setId ? setById_(setId) : null) || defaultSet_();
+}
+
+// ==================== บทบาทของผู้ประเมิน ====================
+
+/**
+ * บทบาทเป็นข้อมูลที่แก้ไขได้ ไม่ได้ฝังอยู่ในโค้ด
+ * ผู้ดูแลระบบจึงเพิ่มบทบาทใหม่ (เช่น "หัวหน้างานระบบดูแลช่วยเหลือนักเรียน")
+ * และกำหนดได้ว่าบทบาทนั้นประเมินครูกลุ่มใด โดยไม่ต้องแก้โค้ด
+ */
+
+/** บทบาทเริ่มต้นในรูปแบบเดียวกับที่อ่านจากชีท (ใช้เมื่อยังไม่มีชีทบทบาท) */
+function fallbackRoles_() {
+  return DEFAULT_ROLE_LIST.map(function (r, i) {
+    return {
+      key: r.key, name: r.name, scopeType: r.scopeType, scopeOptions: [],
+      description: r.description, order: i + 1, status: STATUS.ACTIVE,
+      builtIn: true, synthetic: true
+    };
+  });
+}
+
+function normalizeScopeType_(value) {
+  const t = str_(value);
+  const keys = Object.keys(SCOPE_TYPES);
+  for (let i = 0; i < keys.length; i++) {
+    if (SCOPE_TYPES[keys[i]] === t) return t;
+  }
+  return SCOPE_TYPES.ALL;
+}
+
+/** บทบาททั้งหมด (รวมที่ปิดใช้งาน) เรียงตามลำดับที่ผู้ดูแลกำหนด */
+function loadRoles_() {
+  if (MEMO_.derived.roles) return MEMO_.derived.roles;
+
+  let rows = [];
+  try { rows = readTable_(SHEETS.ROLES).rows; } catch (e) { rows = []; }
+
+  const list = [];
+  const seen = {};
+  rows.forEach(function (r) {
+    const key = str_(r['รหัสบทบาท']);
+    const name = str_(r['ชื่อบทบาท']);
+    if (!key || !name || seen[key]) return;
+    seen[key] = true;
+    list.push({
+      key: key,
+      name: name,
+      scopeType: normalizeScopeType_(r['ประเภทขอบเขต']),
+      scopeOptions: parseMembers_(r['ตัวเลือกขอบเขต']),
+      description: str_(r['คำอธิบาย']),
+      order: num_(r['ลำดับ']) || 99,
+      status: str_(r['สถานะ']) || STATUS.ACTIVE,
+      builtIn: !!ROLES[key],
+      _row: r._row
+    });
+  });
+
+  if (!list.length) {
+    MEMO_.derived.roles = fallbackRoles_();
+    return MEMO_.derived.roles;
+  }
+  list.sort(function (a, b) { return (a.order - b.order) || a.key.localeCompare(b.key); });
+  MEMO_.derived.roles = list;
+  return list;
+}
+
+function activeRoles_() {
+  return loadRoles_().filter(function (r) { return r.status !== STATUS.INACTIVE; });
+}
+
+function roleByName_(roleName) {
+  const name = str_(roleName);
+  const found = loadRoles_().filter(function (r) { return r.name === name; });
+  return found.length ? found[0] : null;
+}
+
+function roleByKey_(key) {
+  const k = str_(key);
+  const found = loadRoles_().filter(function (r) { return r.key === k; });
+  return found.length ? found[0] : null;
+}
+
+/** แปลงชื่อบทบาทที่แสดง → key ภายใน */
+function roleKey_(roleName) {
+  const role = roleByName_(roleName);
+  if (role) return role.key;
+  // สำรอง: บทบาทมาตรฐานที่ฝังในโค้ด (กรณีชีทบทบาทยังไม่พร้อม)
+  const keys = Object.keys(ROLES);
+  for (let i = 0; i < keys.length; i++) {
+    if (ROLES[keys[i]] === roleName) return keys[i];
+  }
+  return '';
+}
+
+/** บทบาทนี้ต้องระบุขอบเขตหรือไม่ */
+function isScopedRole_(roleName) {
+  const role = roleByName_(roleName);
+  return !!role && role.scopeType !== SCOPE_TYPES.ALL;
+}
+
+/**
+ * ตัวเลือกขอบเขตของบทบาท
+ * รวมค่ามาตรฐาน + ค่าที่มีอยู่จริงในข้อมูลครู + ค่าที่ผู้ดูแลเพิ่มเองไว้กับบทบาท
+ * @param {Object} role อ็อบเจกต์บทบาทจาก loadRoles_()
+ * @param {Object} [context] {levels, days, departments} ที่คำนวณไว้แล้ว เพื่อไม่ต้องอ่านชีทซ้ำ
+ */
+function roleScopeOptions_(role, context) {
+  const out = [];
+  const add = function (v) {
+    const t = str_(v);
+    if (t && out.indexOf(t) === -1) out.push(t);
+  };
+  if (!role) return out;
+
+  const ctx = context || teacherScopeContext_();
+  if (role.scopeType === SCOPE_TYPES.LEVEL) {
+    LEVELS.forEach(add);
+    ctx.levels.forEach(add);
+  } else if (role.scopeType === SCOPE_TYPES.DAY) {
+    DAYS.forEach(add);
+    ctx.days.forEach(add);
+  } else if (role.scopeType === SCOPE_TYPES.DEPARTMENT) {
+    ctx.departments.forEach(add);
+  }
+  (role.scopeOptions || []).forEach(add);
+  return out;
+}
+
+/** ค่าระดับชั้น วันเวร และกลุ่มสาระที่มีอยู่จริงในทะเบียนครู (อ่านครั้งเดียวต่อการทำงาน 1 รอบ) */
+function teacherScopeContext_() {
+  if (MEMO_.derived.scopeContext) return MEMO_.derived.scopeContext;
+
+  const levels = [], days = [], departments = [];
+  const push = function (arr, v) {
+    const t = str_(v);
+    if (t && arr.indexOf(t) === -1) arr.push(t);
+  };
+  try {
+    readTable_(SHEETS.TEACHERS).rows.forEach(function (r) {
+      push(levels, r['ระดับชั้นที่ปรึกษา']);
+      push(days, r['เวรประจำวัน (ค่าเริ่มต้น)']);
+      push(departments, r['กลุ่มสาระ/ฝ่าย']);
+    });
+  } catch (e) { /* ยังไม่มีทะเบียนครู */ }
+  try {
+    readTable_(SHEETS.DUTY).rows.forEach(function (r) { push(days, r['เวรประจำวัน']); });
+  } catch (e) { /* ยังไม่มีตารางเวร */ }
+
+  MEMO_.derived.scopeContext = { levels: levels, days: days, departments: departments };
+  return MEMO_.derived.scopeContext;
 }
 
 // ==================== กลุ่มผู้ประเมินของแต่ละชุด ====================
@@ -746,12 +897,26 @@ function teachersWithDuty_(year, semester, includeInactive) {
  */
 function teachersForEvaluator_(role, scope, year, semester, precomputed) {
   const all = precomputed || teachersWithDuty_(year, semester, false);
-  if (role === ROLES.VICE_DIRECTOR || role === ROLES.HEAD_AFFAIRS) return all;
-  if (role === ROLES.HEAD_LEVEL) {
-    return all.filter(function (t) { return t.level === scope; });
+  const def = roleByName_(role);
+  if (!def) return [];
+  if (def.status === STATUS.INACTIVE) return [];
+
+  const s = str_(scope);
+  switch (def.scopeType) {
+    case SCOPE_TYPES.LEVEL:
+      return s ? all.filter(function (t) { return t.level === s; }) : [];
+    case SCOPE_TYPES.DAY:
+      return s ? all.filter(function (t) { return t.dutyDay === s; }) : [];
+    case SCOPE_TYPES.DEPARTMENT:
+      return s ? all.filter(function (t) { return t.department === s; }) : [];
+    case SCOPE_TYPES.TEACHERS: {
+      const wanted = parseMembers_(s);
+      if (!wanted.length) return [];
+      return all.filter(function (t) {
+        return wanted.indexOf(t.id) !== -1 || wanted.indexOf(t.name) !== -1;
+      });
+    }
+    default:
+      return all;   // ทุกคน
   }
-  if (role === ROLES.HEAD_DUTY) {
-    return all.filter(function (t) { return t.dutyDay === scope; });
-  }
-  return [];
 }
