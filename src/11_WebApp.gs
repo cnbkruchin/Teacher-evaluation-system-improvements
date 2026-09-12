@@ -114,6 +114,13 @@ function healthCheck_() {
   const webapp = webAppUrl_();
   push(!!webapp, 'ลิงก์เว็บแอป', webapp ? 'เผยแพร่แล้ว' : 'ยังไม่ได้เผยแพร่');
 
+  // กฎที่ตั้งเป็น "ปฏิเสธข้อมูลที่ไม่ถูกต้อง" จะทำให้ระบบบันทึกข้อมูลไม่ได้
+  // (ส่วนใหญ่เป็นกฎที่ค้างมาจากระบบรุ่นก่อน) จึงควรเตือนให้สั่งติดตั้งซ้ำเพื่อล้างทิ้ง
+  const blocking = countBlockingValidations_();
+  push(blocking === 0, 'กฎการกรอกข้อมูลในชีท',
+    blocking === 0 ? 'ไม่มีกฎที่ขวางการบันทึก'
+      : 'พบกฎแบบบล็อกค้างอยู่ ' + blocking + ' คอลัมน์ — สั่ง "ติดตั้ง / อัปเกรดระบบ" เพื่อล้างทิ้ง');
+
   return { healthy: items.every(function (i) { return i.ok; }), items: items };
 }
 
@@ -151,4 +158,20 @@ function showHelp() {
     '  ได้โดยข้อมูลภาคเรียนเดิมไม่เปลี่ยนตาม และคัดลอกจากภาคเรียนก่อนได้';
 
   SpreadsheetApp.getUi().alert(help);
+}
+
+/** นับคอลัมน์ที่ยังมีกฎการกรอกข้อมูลแบบบล็อก (สาเหตุของ Exception ตอนบันทึกข้อมูล) */
+function countBlockingValidations_() {
+  let count = 0;
+  validatedSheets_().forEach(function (name) {
+    const sheet = ss_().getSheetByName(name);
+    if (!sheet) return;
+    try {
+      const rules = sheet.getRange(2, 1, 1, sheet.getMaxColumns()).getDataValidations()[0] || [];
+      rules.forEach(function (rule) {
+        if (rule && rule.getAllowInvalid() === false) count++;
+      });
+    } catch (e) { /* อ่านกฎไม่ได้ก็ข้ามไป */ }
+  });
+  return count;
 }

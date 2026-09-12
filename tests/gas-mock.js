@@ -16,7 +16,7 @@ function chainable(target) {
 }
 
 class Sheet {
-  constructor(name) { this.name = name; this.data = []; this.hidden = false; }
+  constructor(name) { this.name = name; this.data = []; this.hidden = false; this.validations = new Map(); }
   getName() { return this.name; }
   setName(n) { this.name = n; return this; }
   _cell(r, c) {
@@ -49,6 +49,11 @@ class Sheet {
   getMaxColumns() { return Math.max(30, this.getLastColumn()); }
   getMaxRows() { return Math.max(1000, this.getLastRow()); }
   getRange(r, c, nr, nc) { return makeRange(this, r, c, nr === undefined ? 1 : nr, nc === undefined ? 1 : nc); }
+  _rule(r, c) { return this.validations.get(r + ':' + c) || null; }
+  _setRule(r, c, rule) {
+    if (rule) this.validations.set(r + ':' + c, rule);
+    else this.validations.delete(r + ':' + c);
+  }
   appendRow(values) {
     ops.writes++;
     const r = this.getLastRow() + 1;
@@ -56,9 +61,26 @@ class Sheet {
     values.forEach((v, i) => { this.data[r - 1][i] = v; });
     return this;
   }
-  deleteRow(r) { ops.deletes++; this.data.splice(r - 1, 1); return this; }
-  deleteRows(r, n) { ops.deletes++; this.data.splice(r - 1, n); return this; }
-  clear() { this.data = []; return this; }
+  deleteRow(r) { return this.deleteRows(r, 1); }
+  deleteRows(r, n) {
+    ops.deletes++;
+    this.data.splice(r - 1, n);
+    this._shiftRules(r, n);
+    return this;
+  }
+  /** เลื่อนกฎการตรวจสอบข้อมูลขึ้นตามแถวที่ถูกลบ ให้เหมือน Google Sheets ของจริง */
+  _shiftRules(from, count) {
+    if (!this.validations.size) return;
+    const next = new Map();
+    this.validations.forEach((rule, key) => {
+      const parts = key.split(':');
+      const r = Number(parts[0]), c = Number(parts[1]);
+      if (r >= from && r < from + count) return;             // แถวที่ถูกลบ
+      next.set((r >= from + count ? r - count : r) + ':' + c, rule);
+    });
+    this.validations = next;
+  }
+  clear() { this.data = []; this.validations = new Map(); return this; }
   hideSheet() { this.hidden = true; return this; }
   getProtections() { return []; }
   protect() { return chainable({ setDescription() { return this; }, setWarningOnly() { return this; } }); }
@@ -66,6 +88,42 @@ class Sheet {
 }
 ['setFrozenRows','setFrozenColumns','setRowHeight','setRowHeights','setColumnWidth','setColumnWidths','autoResizeColumns','hideColumns','showColumns','setTabColor','activate','insertSheet']
   .forEach(m => { Sheet.prototype[m] = function () { return this; }; });
+
+/** กฎการตรวจสอบข้อมูลของชีท (มีเมธอดเหมือนของจริงเพื่อให้โค้ดอ่านคุณสมบัติได้) */
+class DataValidationRule {
+  constructor(list, allowInvalid, helpText) {
+    this.list = list;
+    this.allowInvalid = allowInvalid;
+    this.helpText = helpText;
+  }
+  getAllowInvalid() { return this.allowInvalid; }
+  getHelpText() { return this.helpText; }
+  getCriteriaType() { return 'VALUE_IN_LIST'; }
+  getCriteriaValues() { return [this.list ? this.list.slice() : []]; }
+}
+
+function columnLetter(col) {
+  let out = '';
+  let n = col;
+  while (n > 0) { const rem = (n - 1) % 26; out = String.fromCharCode(65 + rem) + out; n = Math.floor((n - 1) / 26); }
+  return out;
+}
+
+/**
+ * จำลองพฤติกรรมจริงของ Google Sheets: กฎที่ตั้งเป็น "ปฏิเสธข้อมูลที่ไม่ถูกต้อง"
+ * (setAllowInvalid(false)) จะโยน Exception เมื่อสคริปต์เขียนค่าที่อยู่นอกรายการ
+ * มีไว้เพื่อให้ชุดทดสอบจับข้อผิดพลาดประเภทนี้ได้ แทนที่จะไปเจอตอนใช้งานจริง
+ */
+function enforceValidation(sheet, row, col, value) {
+  const rule = sheet._rule(row, col);
+  if (!rule || rule.allowInvalid) return;
+  if (value === '' || value === null || value === undefined) return;
+  if (!Array.isArray(rule.list)) return;
+  if (rule.list.indexOf(value) !== -1) return;
+  throw new Error('ข้อมูลที่ป้อนลงในเซลล์ ' + columnLetter(col) + row +
+    ' ละเมิดกฎการตรวจสอบข้อมูลที่ตั้งไว้ในเซลล์นี้ โปรดป้อนค่าใดค่าหนึ่งต่อไปนี้: ' +
+    rule.list.join(', '));
+}
 
 function makeRange(sheet, row, col, numRows, numCols) {
   let proxy;
@@ -83,22 +141,50 @@ function makeRange(sheet, row, col, numRows, numCols) {
     getValue() { ops.reads++; return sheet._cell(row, col); },
     setValues(values) {
       ops.writes++;
+      values.forEach((line, r) => line.forEach((v, c) => enforceValidation(sheet, row + r, col + c, v)));
       sheet._ensure(row + numRows - 1, col + numCols - 1);
       values.forEach((line, r) => line.forEach((v, c) => { sheet.data[row + r - 1][col + c - 1] = v; }));
       return proxy;
     },
     setValue(v) {
       ops.writes++;
+      for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) enforceValidation(sheet, row + r, col + c, v);
       sheet._ensure(row + numRows - 1, col + numCols - 1);
       for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) sheet.data[row + r - 1][col + c - 1] = v;
       return proxy;
     },
+    setDataValidation(rule) {
+      if (rule === null || rule === undefined) {
+        /* ล้างกฎ: วนเฉพาะกฎที่มีอยู่จริง จะได้ไม่ต้องไล่ทุกเซลล์ในช่วงกว้างๆ */
+        Array.from(sheet.validations.keys()).forEach(key => {
+          const parts = key.split(':');
+          const r = Number(parts[0]), c = Number(parts[1]);
+          if (r >= row && r < row + numRows && c >= col && c < col + numCols) sheet.validations.delete(key);
+        });
+        return proxy;
+      }
+      for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) sheet._setRule(row + r, col + c, rule);
+      return proxy;
+    },
+    getDataValidation() { return sheet._rule(row, col); },
+    getDataValidations() {
+      const out = [];
+      for (let r = 0; r < numRows; r++) {
+        const line = [];
+        for (let c = 0; c < numCols; c++) line.push(sheet._rule(row + r, col + c));
+        out.push(line);
+      }
+      return out;
+    },
+    getSheet() { return sheet; },
+    getA1Notation() { return columnLetter(col) + row; },
     setFormula(f) { return range.setValue(f); },
     merge() { return proxy; },
     clear() { return range.setValue(''); },
     getRow() { return row; },
     getColumn() { return col; },
-    getNumRows() { return numRows; }
+    getNumRows() { return numRows; },
+    getNumColumns() { return numCols; }
   };
   proxy = new Proxy(range, {
     get(obj, prop) {
@@ -144,10 +230,12 @@ global.SpreadsheetApp = {
     return ss;
   },
   newDataValidation: () => {
+    const draft = { list: null, allowInvalid: true, helpText: '' };
     const builder = {
-      requireValueInList() { return builder; },
-      setAllowInvalid() { return builder; },
-      build() { return {}; }
+      requireValueInList(list) { draft.list = (list || []).slice(); return builder; },
+      setAllowInvalid(allow) { draft.allowInvalid = !!allow; return builder; },
+      setHelpText(text) { draft.helpText = String(text || ''); return builder; },
+      build() { return new DataValidationRule(draft.list, draft.allowInvalid, draft.helpText); }
     };
     return builder;
   },

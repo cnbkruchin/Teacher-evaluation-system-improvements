@@ -8,7 +8,7 @@
 const APP = {
   NAME: 'ระบบประเมินผลการปฏิบัติงานครู',
   SUBTITLE: 'กลุ่มบริหารงานกิจการนักเรียน',
-  VERSION: '3.4.1',
+  VERSION: '3.4.2',
   TIMEZONE: 'Asia/Bangkok'
 };
 

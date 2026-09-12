@@ -380,32 +380,85 @@ function applyFormatting_() {
   }
 }
 
-/** ตั้งกฎการกรอกข้อมูล (dropdown) ให้ชีทที่ผู้ใช้กรอกเองได้ */
-function applyValidations_() {
-  const rule = function (list) {
-    return SpreadsheetApp.newDataValidation().requireValueInList(list, true)
-      .setAllowInvalid(false).build();
-  };
-  const apply = function (sheetName, headerName, list, rows) {
-    const sheet = ss_().getSheetByName(sheetName);
+/** ชีทที่ระบบเป็นผู้ตั้งกฎการกรอกข้อมูลให้ */
+function validatedSheets_() {
+  return [SHEETS.TEACHERS, SHEETS.EVALUATORS, SHEETS.ROLES, SHEETS.DUTY,
+    SHEETS.CRITERIA, SHEETS.SETS, SHEETS.SET_GROUPS];
+}
+
+/**
+ * ล้างกฎการตรวจสอบข้อมูลทั้งหมดในชีทที่ระบบดูแล
+ *
+ * จำเป็นเพราะกฎที่ระบบรุ่นก่อนตั้งไว้จะฝังอยู่ในไฟล์ตลอดไป แม้โค้ดรุ่นใหม่จะไม่ตั้งแล้ว
+ * การล้างก่อนตั้งใหม่ทุกครั้งทำให้ชีทมีเฉพาะกฎของรุ่นปัจจุบันเท่านั้น
+ */
+function clearAllValidations_() {
+  validatedSheets_().forEach(function (name) {
+    const sheet = ss_().getSheetByName(name);
     if (!sheet) return;
+    try {
+      sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).setDataValidation(null);
+    } catch (e) { /* ล้างไม่ได้ก็ข้ามไป ไม่ควรทำให้การติดตั้งล้มเหลว */ }
+  });
+}
+
+/**
+ * ตั้งกฎการกรอกข้อมูล (dropdown) ให้ชีทที่ผู้ใช้กรอกเองได้
+ *
+ * หลักสำคัญ: กฎเหล่านี้เป็น "ตัวช่วยตอนพิมพ์ในชีท" เท่านั้น จึงตั้งเป็นแบบ
+ * **เตือนแต่ไม่บล็อก** (setAllowInvalid(true)) เสมอ เพราะค่าหลายอย่างในระบบ
+ * ผู้ดูแลกำหนดเองได้ (บทบาท · ขอบเขต · ระดับชั้น · กลุ่มสาระ) และการนำเข้าไฟล์
+ * ก็นำค่าที่อยู่นอกรายการเข้ามาได้ หากตั้งเป็นแบบบล็อก ระบบจะเขียนข้อมูลไม่ได้
+ * และขึ้น Exception "ข้อมูลที่ป้อนละเมิดกฎการตรวจสอบข้อมูล"
+ *
+ * การตรวจความถูกต้องจริงทำที่ฝั่งเซิร์ฟเวอร์ในแต่ละ API อยู่แล้ว
+ */
+function applyValidations_() {
+  // ล้างกฎเก่าทั้งหมดในชีทที่ระบบดูแลก่อนเสมอ เพื่อไม่ให้กฎแบบบล็อกจากรุ่นก่อน
+  // ค้างอยู่ในคอลัมน์ที่ปัจจุบันไม่ได้ตั้งกฎแล้ว (เป็นสาเหตุของ Exception ตอนบันทึก)
+  clearAllValidations_();
+
+  const rule = function (list, help) {
+    return SpreadsheetApp.newDataValidation()
+      .requireValueInList(list, true)
+      .setAllowInvalid(true)                       // เตือนแต่ไม่บล็อก
+      .setHelpText(help || 'เลือกจากรายการ หรือพิมพ์ค่าอื่นได้หากจำเป็น')
+      .build();
+  };
+
+  const rangeOf = function (sheetName, headerName, rows) {
+    const sheet = ss_().getSheetByName(sheetName);
+    if (!sheet) return null;
     const idx = tableHeaders_(sheetName).indexOf(headerName);
-    if (idx === -1) return;
-    sheet.getRange(2, idx + 1, rows || 500, 1).setDataValidation(rule(list));
+    if (idx === -1) return null;
+    const height = Math.min(rows || 500, Math.max(sheet.getMaxRows() - 1, 1));
+    return sheet.getRange(2, idx + 1, height, 1);
+  };
+
+  const apply = function (sheetName, headerName, list, rows, help) {
+    const range = rangeOf(sheetName, headerName, rows);
+    if (range) range.setDataValidation(rule(list, help));
   };
 
   apply(SHEETS.TEACHERS, 'คำนำหน้า', PREFIXES);
-  apply(SHEETS.TEACHERS, 'ระดับชั้นที่ปรึกษา', LEVELS);
+  apply(SHEETS.TEACHERS, 'ระดับชั้นที่ปรึกษา', LEVELS,
+    500, 'เลือกระดับชั้น หรือพิมพ์ระดับชั้นอื่นที่โรงเรียนใช้ได้');
   apply(SHEETS.TEACHERS, 'เวรประจำวัน (ค่าเริ่มต้น)', DAYS);
   apply(SHEETS.TEACHERS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE]);
 
   apply(SHEETS.EVALUATORS, 'คำนำหน้า', PREFIXES, 200);
   const roleNames = activeRoles_().map(function (r) { return r.name; });
-  if (roleNames.length) apply(SHEETS.EVALUATORS, 'บทบาท', roleNames, 200);
+  if (roleNames.length) {
+    apply(SHEETS.EVALUATORS, 'บทบาท', roleNames, 200,
+      'เลือกบทบาทจากชีท "' + SHEETS.ROLES + '" — เพิ่มบทบาทใหม่ได้ที่หน้าจอ "ผู้ประเมิน"');
+  }
+  // คอลัมน์ "ขอบเขต" ไม่ตั้งกฎ เพราะค่าขึ้นกับประเภทของบทบาท
+  // (ระดับชั้น · วันเวร · กลุ่มสาระ/ฝ่าย · รายชื่อครู) ซึ่งผู้ดูแลเพิ่มเองได้อิสระ
+  apply(SHEETS.EVALUATORS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 200);
+
   apply(SHEETS.ROLES, 'ประเภทขอบเขต',
     Object.keys(SCOPE_TYPES).map(function (k) { return SCOPE_TYPES[k]; }), 50);
   apply(SHEETS.ROLES, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 50);
-  apply(SHEETS.EVALUATORS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 200);
 
   apply(SHEETS.DUTY, 'ภาคเรียน', ALL_SEMESTERS.map(function (x) { return x.value; }), 2000);
   apply(SHEETS.DUTY, 'เวรประจำวัน', DAYS, 2000);
@@ -419,6 +472,33 @@ function applyValidations_() {
   apply(SHEETS.SETS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 50);
   apply(SHEETS.SET_GROUPS, 'ประเภท', [GROUP_TYPES.ROLE, GROUP_TYPES.PERSON], 300);
   apply(SHEETS.SET_GROUPS, 'สถานะ', [STATUS.ACTIVE, STATUS.INACTIVE], 300);
+}
+
+/**
+ * ปรับรายการบทบาทใน dropdown ของชีทผู้ประเมินให้ตรงกับบทบาทที่มีอยู่จริง
+ * เรียกทุกครั้งที่เพิ่ม/แก้ไข/ลบบทบาท เพื่อไม่ให้รายการในชีทล้าสมัย
+ */
+function refreshRoleValidation_() {
+  try {
+    const sheet = ss_().getSheetByName(SHEETS.EVALUATORS);
+    if (!sheet) return false;
+    const idx = tableHeaders_(SHEETS.EVALUATORS).indexOf('บทบาท');
+    if (idx === -1) return false;
+    const names = activeRoles_().map(function (r) { return r.name; });
+    if (!names.length) return false;
+
+    const height = Math.min(200, Math.max(sheet.getMaxRows() - 1, 1));
+    sheet.getRange(2, idx + 1, height, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(names, true)
+        .setAllowInvalid(true)
+        .setHelpText('เลือกบทบาทจากชีท "' + SHEETS.ROLES + '"')
+        .build()
+    );
+    return true;
+  } catch (e) {
+    return false;   // ปรับ dropdown ไม่ได้ไม่ควรทำให้การบันทึกข้อมูลล้มเหลว
+  }
 }
 
 /** ซ่อนและป้องกันชีทที่มีข้อมูลอ่อนไหว */

@@ -177,12 +177,80 @@ function objectToRow_(headers, obj) {
   });
 }
 
+/**
+ * เขียนค่าลงช่วงเซลล์ พร้อมกู้สถานการณ์เมื่อชีทมี "กฎการตรวจสอบข้อมูล" แบบบล็อกค้างอยู่
+ *
+ * ที่มา: ระบบรุ่นก่อนเคยตั้ง dropdown แบบ "ปฏิเสธข้อมูลที่ไม่ถูกต้อง" ไว้ในชีท
+ * กฎนั้นยังฝังอยู่ในไฟล์แม้จะอัปเกรดโค้ดแล้ว เมื่อระบบบันทึกค่าที่อยู่นอกรายการเดิม
+ * (เช่น ขอบเขตแบบ "กลุ่มสาระ/ฝ่าย" หรือบทบาทที่ผู้ดูแลเพิ่มเองภายหลัง)
+ * Google Sheets จะโยน Exception "ข้อมูลที่ป้อนลงในเซลล์ ... ละเมิดกฎการตรวจสอบข้อมูล"
+ * และงานของผู้ใช้จะบันทึกไม่ได้เลย
+ *
+ * วิธีจัดการ: ถ้าเขียนไม่ผ่านเพราะกฎแบบบล็อก ให้ล้างกฎในคอลัมน์นั้นทิ้งแล้วเขียนซ้ำ
+ * ผู้ใช้จึงทำงานต่อได้ทันทีโดยไม่ต้องรอให้ผู้ดูแลระบบไปแก้ชีทเอง
+ * (กฎแบบ "เตือนแต่ไม่บล็อก" ที่ระบบใช้ในปัจจุบันไม่เคยโยน Exception จึงไม่ถูกล้าง)
+ */
+function setValuesSafely_(range, values) {
+  try {
+    range.setValues(values);
+  } catch (err) {
+    // ตัดสินจากตัวกฎในชีทโดยตรง (ไม่ดูจากข้อความผิดพลาด เพราะเปลี่ยนตามภาษาของผู้ใช้)
+    // ถ้าไม่มีกฎแบบบล็อกในคอลัมน์ที่เขียนเลย แปลว่าเขียนไม่ได้ด้วยสาเหตุอื่น จึงส่งต่อตามเดิม
+    if (!clearBlockingValidation_(range)) throw withValidationHint_(err);
+    range.setValues(values);
+  }
+}
+
+/** ข้อความผิดพลาดนี้เกิดจากกฎการตรวจสอบข้อมูลของชีทหรือไม่ (รองรับทั้งไทยและอังกฤษ) */
+function isValidationError_(err) {
+  const msg = String((err && err.message) || err || '');
+  return msg.indexOf('ตรวจสอบข้อมูล') !== -1 ||
+    msg.toLowerCase().indexOf('data validation') !== -1;
+}
+
+/** เติมวิธีแก้ให้ข้อความผิดพลาดที่เกิดจากกฎการกรอกข้อมูล ผู้ใช้จะได้รู้ว่าต้องทำอะไรต่อ */
+function withValidationHint_(err) {
+  if (!isValidationError_(err)) return err;
+  return new Error(String((err && err.message) || err) +
+    ' — วิธีแก้: เปิดเมนู "🏫 ระบบประเมินผล → ⚙️ ติดตั้ง / อัปเกรดระบบ" หนึ่งครั้ง ' +
+    'เพื่อล้างกฎการกรอกข้อมูลที่ค้างมาจากระบบรุ่นก่อน (ข้อมูลไม่หาย)');
+}
+
+/**
+ * ล้างเฉพาะกฎแบบบล็อกออกจากคอลัมน์ที่กำลังเขียน (ล้างทั้งคอลัมน์ จะได้ไม่ติดปัญหาเดิมซ้ำอีก)
+ * กฎแบบ "เตือนแต่ไม่บล็อก" ที่ช่วยผู้ใช้ตอนพิมพ์ในชีทยังคงอยู่ตามเดิม
+ * คืนค่าจำนวนคอลัมน์ที่ล้าง — ถ้าเป็น 0 แปลว่าไม่มีกฎแบบบล็อกอยู่เลย
+ */
+function clearBlockingValidation_(range) {
+  const sheet = range.getSheet();
+  const firstCol = range.getColumn();
+  const width = range.getNumColumns();
+  const rows = Math.max(sheet.getMaxRows() - 1, 1);
+
+  let current = [];
+  try {
+    current = sheet.getRange(range.getRow(), firstCol, 1, width).getDataValidations()[0] || [];
+  } catch (e) { return 0; }
+
+  let cleared = 0;
+  for (let i = 0; i < width; i++) {
+    const rule = current[i];
+    if (!rule) continue;
+    let blocking = true;
+    try { blocking = (rule.getAllowInvalid() === false); } catch (e) { blocking = true; }
+    if (!blocking) continue;
+    sheet.getRange(2, firstCol + i, rows, 1).setDataValidation(null);
+    cleared++;
+  }
+  return cleared;
+}
+
 /** เพิ่มข้อมูล 1 แถวต่อท้ายชีท คืนค่าเลขแถวที่เขียน */
 function appendRecord_(name, obj) {
   const sheet = getSheet_(name);
   const headers = tableHeaders_(name);
   const row = sheet.getLastRow() + 1;
-  sheet.getRange(row, 1, 1, headers.length).setValues([objectToRow_(headers, obj)]);
+  setValuesSafely_(sheet.getRange(row, 1, 1, headers.length), [objectToRow_(headers, obj)]);
   invalidateTable_(name);
   return row;
 }
@@ -194,7 +262,7 @@ function appendRecords_(name, objects) {
   const headers = tableHeaders_(name);
   const start = sheet.getLastRow() + 1;
   const values = objects.map(function (o) { return objectToRow_(headers, o); });
-  sheet.getRange(start, 1, values.length, headers.length).setValues(values);
+  setValuesSafely_(sheet.getRange(start, 1, values.length, headers.length), values);
   invalidateTable_(name);
   return values.length;
 }
@@ -225,7 +293,7 @@ function updateRecord_(name, rowIndex, patch) {
   const values = (targets.length === width) ? [new Array(width)] : range.getValues();
   targets.forEach(function (t) { values[0][t.col - min] = normalizeCell_(t.value); });
 
-  range.setValues(values);
+  setValuesSafely_(range, values);
   invalidateTable_(name);
 }
 

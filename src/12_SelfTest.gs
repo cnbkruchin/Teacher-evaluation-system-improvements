@@ -101,6 +101,13 @@ function runSelfTest() {
   check('ใช้การเข้ารหัสแบบมี salt', !!str_(getSetting_(SETTING_KEYS.ADMIN_SALT, '')),
     str_(getSetting_(SETTING_KEYS.ADMIN_SALT, '')) ? 'ใช้แล้ว' : 'จะอัปเกรดอัตโนมัติเมื่อเข้าสู่ระบบครั้งถัดไป');
 
+  // --- กฎการกรอกข้อมูลในชีท ---
+  // กฎแบบ "ปฏิเสธข้อมูลที่ไม่ถูกต้อง" (มักค้างมาจากระบบรุ่นก่อน) จะทำให้บันทึกข้อมูลไม่ได้
+  const blockingRules = countBlockingValidations_();
+  check('ไม่มีกฎการกรอกข้อมูลที่ขวางการบันทึก', blockingRules === 0,
+    blockingRules === 0 ? 'ไม่พบ'
+      : 'พบ ' + blockingRules + ' คอลัมน์ — สั่ง "ติดตั้ง / อัปเกรดระบบ" เพื่อล้างทิ้ง');
+
   // --- สรุปผล ---
   const passed = results.filter(function (r) { return r.ok; }).length;
   const lines = results.map(function (r) {

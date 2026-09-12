@@ -449,6 +449,7 @@ function apiSaveRole(token, data) {
         appendRecord_(SHEETS.ROLES, record);
       }
       invalidateTable_(SHEETS.ROLES);
+      refreshRoleValidation_();   // ให้ dropdown "บทบาท" ในชีทตรงกับบทบาทที่มีจริงเสมอ
 
       // เปลี่ยนชื่อบทบาท → อัปเดตชื่อในทะเบียนผู้ประเมินและกลุ่มผู้ประเมินของชุดให้ตรงกัน
       let renamed = 0;
@@ -530,6 +531,7 @@ function apiToggleRole(token, roleKey) {
 
       updateRecord_(SHEETS.ROLES, target._row, { 'สถานะ': next });
       invalidateTable_(SHEETS.ROLES);
+      refreshRoleValidation_();   // ให้ dropdown "บทบาท" ในชีทตรงกับบทบาทที่มีจริงเสมอ
       logAction_('Admin', 'admin', 'เปลี่ยนสถานะบทบาทผู้ประเมิน', name + ' → ' + next);
       return ok_({ status: next },
         next === STATUS.ACTIVE ? 'เปิดใช้งานบทบาทแล้ว' : 'ปิดใช้งานบทบาทแล้ว');
@@ -576,6 +578,7 @@ function apiDeleteRole(token, roleKey) {
 
       deleteRecord_(SHEETS.ROLES, target._row);
       invalidateTable_(SHEETS.ROLES);
+      refreshRoleValidation_();   // ให้ dropdown "บทบาท" ในชีทตรงกับบทบาทที่มีจริงเสมอ
       logAction_('Admin', 'admin', 'ลบบทบาทผู้ประเมิน', name);
       return ok_(null, 'ลบบทบาท "' + name + '" เรียบร้อย');
     });

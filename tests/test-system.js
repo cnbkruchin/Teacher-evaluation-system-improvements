@@ -1247,6 +1247,100 @@ const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);
 check('ทุกชีทมีอยู่จริง', health.items.filter(i => i.label.indexOf('ชีท') === 0).every(i => i.ok));
 
+/* ---------- 22. กฎการตรวจสอบข้อมูลในชีทต้องไม่บล็อกการบันทึก ---------- */
+section('กฎการตรวจสอบข้อมูลในชีท (ต้องเตือนแต่ไม่บล็อกการบันทึก)');
+
+/** รวบรวมกฎแบบ "ปฏิเสธข้อมูลที่ไม่ถูกต้อง" ที่ยังค้างอยู่ในชีทที่ระบบดูแล */
+function blockingRules() {
+  const found = [];
+  validatedSheets_().forEach(function (name) {
+    const sheet = ss_().getSheetByName(name);
+    if (!sheet) return;
+    const rules = sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).getDataValidations();
+    rules.forEach(function (line, r) {
+      line.forEach(function (rule, c) {
+        if (rule && rule.getAllowInvalid() === false) found.push(name + '!' + (c + 1) + ':' + (r + 1));
+      });
+    });
+  });
+  return found;
+}
+
+const evalSheet = ss_().getSheetByName(SHEETS.EVALUATORS);
+const scopeCol = tableHeaders_(SHEETS.EVALUATORS).indexOf('ขอบเขต (ระดับชั้น/วัน)') + 1;
+const roleCol = tableHeaders_(SHEETS.EVALUATORS).indexOf('บทบาท') + 1;
+const prefixCol = tableHeaders_(SHEETS.EVALUATORS).indexOf('คำนำหน้า') + 1;
+
+check('หลังติดตั้ง ไม่มีกฎแบบบล็อกเหลืออยู่เลย', blockingRules().length === 0, blockingRules().slice(0, 5));
+check('คอลัมน์ "ขอบเขต" กรอกได้อิสระ (ไม่ตั้ง dropdown)',
+  evalSheet.getRange(2, scopeCol, 50, 1).getDataValidations().every(function (l) { return !l[0]; }));
+check('dropdown บทบาทเป็นแบบเตือนแต่ไม่บล็อก',
+  evalSheet.getRange(2, roleCol).getDataValidation().getAllowInvalid() === true);
+
+// --- จำลองไฟล์ของผู้ใช้ที่อัปเกรดมา แล้วยังมีกฎแบบบล็อกของรุ่นก่อนค้างอยู่ ---
+const legacyRule = SpreadsheetApp.newDataValidation()
+  .requireValueInList(LEVELS.concat(DAYS), true).setAllowInvalid(false).build();
+evalSheet.getRange(2, scopeCol, 200, 1).setDataValidation(legacyRule);
+
+check('กฎแบบบล็อกทำให้เขียนค่าไม่ผ่านจริง (ยืนยันว่าชุดทดสอบจับได้)', (function () {
+  try { evalSheet.getRange(3, scopeCol).setValue('กลุ่มสาระวิทยาศาสตร์'); return false; }
+  catch (e) { return isValidationError_(e); }
+})());
+
+const healSave = apiSaveEvaluator(T2, {
+  prefix: 'นาง', firstName: 'หัวหน้ากลุ่มสาระ', lastName: 'วิทยาศาสตร์',
+  newRole: { name: 'หัวหน้ากลุ่มสาระวิทยาศาสตร์', scopeType: SCOPE_TYPES.DEPARTMENT },
+  scope: 'กลุ่มสาระวิทยาศาสตร์'
+});
+check('บันทึกผู้ประเมินผ่าน แม้ชีทมีกฎเก่าค้างอยู่', healSave.success === true, healSave.message);
+check('ข้อมูลถูกเขียนลงชีทจริง',
+  apiListEvaluators(T2).data.rows.some(function (e) { return e.scope === 'กลุ่มสาระวิทยาศาสตร์'; }));
+check('กฎแบบบล็อกถูกล้างทิ้งแล้ว ไม่กลับมาขวางอีก', blockingRules().length === 0, blockingRules().slice(0, 5));
+check('การกู้สถานการณ์ไม่ล้าง dropdown ที่ไม่ได้บล็อก',
+  !!evalSheet.getRange(2, prefixCol).getDataValidation());
+
+// --- ข้อผิดพลาดอื่นที่ไม่ได้เกิดจากกฎการกรอกข้อมูล ต้องไม่ถูกกลบ ---
+check('ข้อผิดพลาดอื่นยังส่งต่อตามเดิม (ไม่พยายามล้างกฎมั่ว)', (function () {
+  const sheet = ss_().getSheetByName(SHEETS.EVALUATORS);
+  const range = sheet.getRange(5, 1, 1, 3);
+  const original = range.setValues;
+  range.setValues = function () { throw new Error('เขียนไม่ได้ด้วยเหตุอื่น'); };
+  try {
+    setValuesSafely_(range, [['a', 'b', 'c']]);
+    return false;
+  } catch (e) {
+    return e.message === 'เขียนไม่ได้ด้วยเหตุอื่น';
+  } finally {
+    range.setValues = original;
+  }
+})());
+
+// --- เพิ่มบทบาทใหม่ → dropdown ในชีทต้องตามทันที ---
+const dropdownRole = apiSaveRole(T2, { name: 'ผู้ประเมินจากหน่วยงานภายนอก', scopeType: SCOPE_TYPES.ALL });
+check('เพิ่มบทบาทใหม่ได้', dropdownRole.success === true, dropdownRole.message);
+check('dropdown บทบาทในชีทมีบทบาทใหม่ทันที',
+  evalSheet.getRange(2, roleCol).getDataValidation()
+    .getCriteriaValues()[0].indexOf('ผู้ประเมินจากหน่วยงานภายนอก') !== -1);
+check('มอบหมายผู้ประเมินให้บทบาทที่เพิ่งสร้างได้',
+  apiSaveEvaluator(T2, {
+    prefix: 'นาย', firstName: 'ผู้ประเมิน', lastName: 'ภายนอก',
+    role: 'ผู้ประเมินจากหน่วยงานภายนอก'
+  }).success === true);
+
+// --- ติดตั้งซ้ำต้องล้างกฎเก่าของทุกชีทที่ระบบดูแล ---
+ss_().getSheetByName(SHEETS.DUTY).getRange(2, 1, 100, 1).setDataValidation(
+  SpreadsheetApp.newDataValidation().requireValueInList(['เฉพาะค่านี้'], true).setAllowInvalid(false).build());
+check('ตั้งกฎแบบบล็อกค้างไว้ได้ (เตรียมทดสอบ)', blockingRules().length > 0);
+runSetup_();
+check('ติดตั้งซ้ำแล้วกฎเก่าถูกล้างหมด', blockingRules().length === 0, blockingRules().slice(0, 5));
+check('ตรวจสุขภาพระบบรายงานว่าไม่มีกฎที่ขวางการบันทึก',
+  countBlockingValidations_() === 0 &&
+  healthCheck_().items.some(function (i) { return i.label === 'กฎการกรอกข้อมูลในชีท' && i.ok; }));
+check('ติดตั้งซ้ำแล้ว dropdown ของระบบยังอยู่ครบ',
+  !!evalSheet.getRange(2, roleCol).getDataValidation() &&
+  !!ss_().getSheetByName(SHEETS.DUTY).getRange(2, tableHeaders_(SHEETS.DUTY).indexOf('เวรประจำวัน') + 1)
+    .getDataValidation());
+
 console.log('\n════════════════════════════════════');
 console.log('  ผ่าน ' + pass + ' รายการ / ไม่ผ่าน ' + fail + ' รายการ');
 console.log('════════════════════════════════════');
