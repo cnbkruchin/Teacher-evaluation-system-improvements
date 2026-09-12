@@ -714,7 +714,7 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
       });
     }
   });
-  sheet.setFrozenRows(headerRow);
+  freezePanes_(sheet, headerRow, 0);
 
   // ---- ช่องลงนาม ----
   const signer = str_(getSetting_(SETTING_KEYS.REPORT_SIGNER, ''));
@@ -763,7 +763,7 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
     });
     detailSheet.setColumnWidth(1, 60);
     detailSheet.setColumnWidth(2, 200);
-    detailSheet.setFrozenRows(2);
+    freezePanes_(detailSheet, 2, 0);
   }
 
   // ---- แผ่นงาน: วิธีคิดคะแนนสุทธิ (แสดงเมื่อเปิดใช้การถ่วงน้ำหนัก) ----
@@ -829,7 +829,7 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
         .setBackground('#e65100').setFontColor('#ffffff').setFontWeight('bold');
       cs.getRange(2, 1, commentRows.length, 4).setValues(commentRows).setWrap(true);
       cs.setColumnWidth(1, 180); cs.setColumnWidth(2, 180); cs.setColumnWidth(3, 200); cs.setColumnWidth(4, 420);
-      cs.setFrozenRows(1);
+      freezePanes_(cs, 1, 0);
     }
   }
 
@@ -849,11 +849,28 @@ function buildReportSpreadsheet_(rows, year, semester, options) {
       rs.getRange(2, 5, rawRows.length, 1).setNumberFormat('0.00');
       rs.setColumnWidth(1, 140); rs.setColumnWidth(2, 180); rs.setColumnWidth(3, 180);
       rs.setColumnWidth(4, 200); rs.setColumnWidth(7, 320);
-      rs.setFrozenRows(1);
+      freezePanes_(rs, 1, 0);
     }
   }
 
   return temp;
+}
+
+/**
+ * ตรึงแถว/คอลัมน์แบบไม่ทำให้การส่งออกทั้งชุดล้ม
+ *
+ * Google Sheets ไม่ยอมให้เส้นตรึงผ่านกลางเซลล์ที่ผสาน และจะโยน Exception ทิ้งงานทั้งหมด
+ * ("ขออภัย จะตรึงคอลัมน์ที่มีเฉพาะบางส่วนของเซลล์ที่ผสานไม่ได้")
+ * การตรึงเป็นเพียงความสะดวกในการอ่าน ไม่ใช่เนื้อหาของรายงาน จึงข้ามไปได้ถ้าติดข้อจำกัดนี้
+ * ดีกว่าปล่อยให้ผู้ใช้ส่งออกรายงานไม่ได้เลย
+ */
+function freezePanes_(sheet, rows, cols) {
+  if (rows) {
+    try { sheet.setFrozenRows(rows); } catch (e) { /* มีเซลล์ผสานคร่อมเส้นตรึง */ }
+  }
+  if (cols) {
+    try { sheet.setFrozenColumns(cols); } catch (e) { /* เช่นเดียวกัน */ }
+  }
 }
 
 // ==================== รายงานรูปแบบใหม่ ====================
@@ -942,8 +959,9 @@ function buildSetScorecardSheet_(spreadsheet, rows, year, semester, setInfo) {
   sheet.setColumnWidth(7 + sets.length, 130);
   sheet.getRange(4, 1, values.length + 1, headers.length)
     .setBorder(true, true, true, true, true, true, '#b0bec5', SpreadsheetApp.BorderStyle.SOLID);
-  sheet.setFrozenRows(4);
-  sheet.setFrozenColumns(3);
+  // ตรึงเฉพาะแถวหัวตาราง — ตรึงคอลัมน์ไม่ได้เพราะแถบหัวรายงาน (แถว 1-2) ผสานยาวทั้งแผ่น
+  // และ Google Sheets ไม่ยอมให้เส้นตรึงผ่านกลางเซลล์ที่ผสาน
+  freezePanes_(sheet, 4, 0);
   return sheet;
 }
 

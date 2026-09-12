@@ -232,6 +232,25 @@ check('สร้างแผ่นงานครบ (สรุป/รายข�
   tempSheets.indexOf('สรุปผลการประเมิน') !== -1 && tempSheets.indexOf('คะแนนรายข้อ') !== -1
   && tempSheets.indexOf('ข้อเสนอแนะ') !== -1 && tempSheets.indexOf('รายการประเมินทั้งหมด') !== -1, tempSheets);
 
+// แผ่นงานส่งหน่วยงาน: แถบหัวรายงานผสานยาวทั้งแผ่น จึงตรึงได้เฉพาะแถว ไม่ใช่คอลัมน์
+// (Google Sheets ไม่ยอมให้เส้นตรึงผ่านกลางเซลล์ที่ผสาน แล้วจะทิ้งงานส่งออกทั้งชุด)
+const scorecard = mock.store.created.slice(-1)[0].getSheets()
+  .filter(s => s.getName() === 'คะแนนรายชุดประเมิน')[0];
+check('มีแผ่นงานคะแนนรายชุดประเมิน', !!scorecard, tempSheets);
+check('ตรึงแถวหัวตารางไว้', scorecard.frozenRows === 4, scorecard.frozenRows);
+check('ไม่ตรึงคอลัมน์ (แถบหัวรายงานผสานคร่อมอยู่)', scorecard.frozenColumns === 0, scorecard.frozenColumns);
+check('ทุกแผ่นงานไม่มีเส้นตรึงผ่านกลางเซลล์ที่ผสาน',
+  mock.store.created.slice(-1)[0].getSheets().every(sh =>
+    sh.merges.every(m =>
+      !(sh.frozenRows && m.r <= sh.frozenRows && m.r + m.nr - 1 > sh.frozenRows) &&
+      !(sh.frozenColumns && m.c <= sh.frozenColumns && m.c + m.nc - 1 > sh.frozenColumns))));
+check('ตรึงไม่ได้ก็ไม่ทำให้การส่งออกล้ม', (function () {
+  const sh = mock.store.created.slice(-1)[0].insertSheet('ทดสอบการตรึง');
+  sh.getRange(1, 1, 1, 8).merge();
+  try { freezePanes_(sh, 1, 3); } catch (e) { return false; }   // ต้องข้ามไปเงียบๆ ไม่โยนต่อ
+  return sh.frozenRows === 1 && sh.frozenColumns === 0;
+})());
+
 const summaryResult = apiGenerateSummary(T, { year: YEAR, semester: '1', teacherIds: chosen });
 check('สรุปผลลงชีทสำเร็จ', summaryResult.success === true, summaryResult.message);
 check('ชีทสรุปมี 3 แถว', readTable_(SHEETS.SUMMARY).rows.length === 3, readTable_(SHEETS.SUMMARY).rows.length);

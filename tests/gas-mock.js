@@ -16,7 +16,12 @@ function chainable(target) {
 }
 
 class Sheet {
-  constructor(name) { this.name = name; this.data = []; this.hidden = false; this.validations = new Map(); }
+  constructor(name) {
+    this.name = name; this.data = []; this.hidden = false;
+    this.validations = new Map();
+    this.merges = [];                       // ช่วงเซลล์ที่ผสาน
+    this.frozenRows = 0; this.frozenColumns = 0;
+  }
   getName() { return this.name; }
   setName(n) { this.name = n; return this; }
   _cell(r, c) {
@@ -49,6 +54,33 @@ class Sheet {
   getMaxColumns() { return Math.max(30, this.getLastColumn()); }
   getMaxRows() { return Math.max(1000, this.getLastRow()); }
   getRange(r, c, nr, nc) { return makeRange(this, r, c, nr === undefined ? 1 : nr, nc === undefined ? 1 : nc); }
+  /**
+   * จำลองข้อจำกัดจริงของ Google Sheets: ตรึงแถว/คอลัมน์ผ่าน "กลางเซลล์ที่ผสาน" ไม่ได้
+   * ถ้าเซลล์ผสานเริ่มก่อนเส้นตรึงแต่ลากยาวเลยออกไป จะโยน Exception ทันที
+   */
+  _assertFreezable(count, axis) {
+    const straddling = this.merges.filter(m => {
+      const start = axis === 'rows' ? m.r : m.c;
+      const span = axis === 'rows' ? m.nr : m.nc;
+      return start <= count && start + span - 1 > count;
+    });
+    if (!straddling.length) return;
+    const what = axis === 'rows' ? 'แถว' : 'คอลัมน์';
+    throw new Error('ขออภัย จะตรึง' + what + 'ที่มีเฉพาะบางส่วนของเซลล์ที่ผสานไม่ได้ ' +
+      'โปรดลองแยกเซลล์ที่ผสาน หรือตรึง' + what + 'เพิ่ม เพื่อให้ครอบคลุมเซลล์ที่ผสานทั้งหมด');
+  }
+  setFrozenRows(n) { this._assertFreezable(n, 'rows'); this.frozenRows = n; return this; }
+  setFrozenColumns(n) { this._assertFreezable(n, 'columns'); this.frozenColumns = n; return this; }
+  /** บันทึกช่วงที่ผสาน พร้อมตรวจว่าไม่ได้ผสานคร่อมเส้นตรึงที่มีอยู่ */
+  _addMerge(r, c, nr, nc) {
+    if (this.frozenRows && r <= this.frozenRows && r + nr - 1 > this.frozenRows) {
+      throw new Error('ผสานเซลล์คร่อมแถวที่ตรึงไว้ไม่ได้');
+    }
+    if (this.frozenColumns && c <= this.frozenColumns && c + nc - 1 > this.frozenColumns) {
+      throw new Error('ผสานเซลล์คร่อมคอลัมน์ที่ตรึงไว้ไม่ได้');
+    }
+    this.merges.push({ r: r, c: c, nr: nr, nc: nc });
+  }
   _rule(r, c) { return this.validations.get(r + ':' + c) || null; }
   _setRule(r, c, rule) {
     if (rule) this.validations.set(r + ':' + c, rule);
@@ -86,7 +118,7 @@ class Sheet {
   protect() { return chainable({ setDescription() { return this; }, setWarningOnly() { return this; } }); }
   getDataRange() { return this.getRange(1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
 }
-['setFrozenRows','setFrozenColumns','setRowHeight','setRowHeights','setColumnWidth','setColumnWidths','autoResizeColumns','hideColumns','showColumns','setTabColor','activate','insertSheet']
+['setRowHeight','setRowHeights','setColumnWidth','setColumnWidths','autoResizeColumns','hideColumns','showColumns','setTabColor','activate','insertSheet']
   .forEach(m => { Sheet.prototype[m] = function () { return this; }; });
 
 /** กฎการตรวจสอบข้อมูลของชีท (มีเมธอดเหมือนของจริงเพื่อให้โค้ดอ่านคุณสมบัติได้) */
@@ -179,7 +211,7 @@ function makeRange(sheet, row, col, numRows, numCols) {
     getSheet() { return sheet; },
     getA1Notation() { return columnLetter(col) + row; },
     setFormula(f) { return range.setValue(f); },
-    merge() { return proxy; },
+    merge() { sheet._addMerge(row, col, numRows, numCols); return proxy; },
     clear() { return range.setValue(''); },
     getRow() { return row; },
     getColumn() { return col; },
