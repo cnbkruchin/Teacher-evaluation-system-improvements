@@ -76,7 +76,8 @@ function buildSummaryRows_(options) {
       groups[key] = {
         teacherId: teacherId || '',
         name: teacherName,
-        level: duty.level || master.level || str_(r['ระดับชั้น']),
+        // ระดับชั้นยึดทะเบียนครูเป็นหลัก ให้ตรงกับสิทธิ์ของหัวหน้าระดับชั้นและหน้าจออื่น
+        level: master.level || str_(r['ระดับชั้น']) || duty.level,
         department: master.department || '',
         dutyDay: duty.day || str_(r['เวรประจำวัน']) || master.defaultDay || '',
         dutyPosition: duty.position || '',
@@ -412,7 +413,7 @@ function orderedReportRows_(payload) {
       if (!t) return null;
       const duty = roster.byTeacherId[key] || {};
       return {
-        key: key, teacherId: t.id, name: t.name, level: duty.level || t.level, department: t.department,
+        key: key, teacherId: t.id, name: t.name, level: t.level || duty.level, department: t.department,
         dutyDay: duty.day || t.defaultDay || '', dutyPosition: duty.position || '',
         dutyLocation: duty.location || '', dutyTime: '',
         viceDirector: null, headAffairs: null, headLevel: null, headDuty: null,

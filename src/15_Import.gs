@@ -413,7 +413,13 @@ function apiCommitTeacherImport(token, payload) {
         const existing = (item.code && byCode[item.code]) || byName[fullName];
         if (existing) {
           if (!p.updateExisting) { skipped.push(fullName + ' (มีอยู่แล้ว)'); return; }
-          updates.push({ row: existing._row, patch: record });
+          updates.push({
+            row: existing._row, patch: record,
+            id: str_(existing['รหัสครู']),
+            oldName: str_(existing['ชื่อ-นามสกุล']),
+            newName: fullName,
+            oldStatus: str_(existing['สถานะ']) || STATUS.ACTIVE
+          });
         } else {
           const code = str_(item.code) && !byCode[str_(item.code)] ? str_(item.code) : nextCode_('TCH', codes);
           codes.push(code);
@@ -428,11 +434,24 @@ function apiCommitTeacherImport(token, payload) {
       appendRecords_(SHEETS.TEACHERS, toAdd);
       updates.forEach(function (u) { updateRecord_(SHEETS.TEACHERS, u.row, u.patch); });
 
+      // ทะเบียนครูเป็นแหล่งข้อมูลหลัก — ตารางเวรและผลการประเมินต้องตามชื่อ/สถานะใหม่ให้ตรง
+      let synced = 0;
+      updates.forEach(function (u) {
+        if (!u.id) return;
+        if (u.oldName && u.newName && u.oldName !== u.newName) {
+          syncTeacherName_(u.id, u.newName);
+          synced++;
+        }
+        const newStatus = u.patch['สถานะ'];
+        if (newStatus && u.oldStatus !== newStatus) syncTeacherStatusToDuty_(u.id, newStatus);
+      });
+
       logAction_('Admin', 'admin', 'นำเข้ารายชื่อครูจากไฟล์',
         'เพิ่ม ' + toAdd.length + ' คน · อัปเดต ' + updates.length + ' คน · ข้าม ' + skipped.length + ' รายการ' +
+        (synced ? ' | ปรับชื่อในตารางเวร/ผลการประเมิน ' + synced + ' คน' : '') +
         (p.fileName ? ' | ไฟล์: ' + str_(p.fileName) : ''));
 
-      return ok_({ added: toAdd.length, updated: updates.length, skipped: skipped },
+      return ok_({ added: toAdd.length, updated: updates.length, skipped: skipped, synced: synced },
         'นำเข้าเรียบร้อย: เพิ่ม ' + toAdd.length + ' คน' +
         (updates.length ? ', อัปเดต ' + updates.length + ' คน' : '') +
         (skipped.length ? ', ข้าม ' + skipped.length + ' รายการ' : ''));

@@ -133,11 +133,31 @@ function apiSaveTeacher(token, data) {
       };
 
       if (target) {
+        const teacherId = str_(target['รหัสครู']);
         const oldName = str_(target['ชื่อ-นามสกุล']);
+        const oldDay = str_(target['เวรประจำวัน (ค่าเริ่มต้น)']);
+        const oldStatus = str_(target['สถานะ']) || STATUS.ACTIVE;
         updateRecord_(SHEETS.TEACHERS, target._row, record);
-        if (oldName && oldName !== fullName) syncTeacherName_(str_(target['รหัสครู']), fullName);
-        logAction_('Admin', 'admin', 'แก้ไขข้อมูลครู', fullName);
-        return ok_({ id: str_(target['รหัสครู']) }, 'บันทึกข้อมูลครูเรียบร้อย');
+
+        // ทะเบียนครูเป็นแหล่งข้อมูลหลักของชื่อและสถานะ — ตารางเวรต้องตามให้ตรงเสมอ
+        if (oldName && oldName !== fullName) syncTeacherName_(teacherId, fullName);
+        if (oldStatus !== record['สถานะ']) syncTeacherStatusToDuty_(teacherId, record['สถานะ']);
+
+        // วันเวรของแต่ละภาคเรียนตั้งใจให้แยกอิสระ จึงอัปเดตเฉพาะเมื่อผู้ดูแลสั่งเท่านั้น
+        let dutyUpdated = 0;
+        const newDay = record['เวรประจำวัน (ค่าเริ่มต้น)'];
+        const dayChanged = oldDay !== newDay;
+        if (dayChanged && d.applyDayToCurrentTerm) {
+          dutyUpdated = applyDefaultDayToTerm_(teacherId, newDay);
+        }
+
+        logAction_('Admin', 'admin', 'แก้ไขข้อมูลครู', fullName +
+          (dutyUpdated ? ' | อัปเดตตารางเวรภาคเรียนปัจจุบันเป็นวัน' + newDay : ''));
+        return ok_({
+          id: teacherId, dayChanged: dayChanged, dutyUpdated: dutyUpdated,
+          currentTermDay: currentTermDutyDay_(teacherId)
+        }, 'บันทึกข้อมูลครูเรียบร้อย' +
+          (dutyUpdated ? ' และอัปเดตตารางเวรของภาคเรียนปัจจุบันแล้ว' : ''));
       }
 
       record['รหัสครู'] = nextCode_('TCH', codes);
@@ -147,6 +167,62 @@ function apiSaveTeacher(token, data) {
       return ok_({ id: record['รหัสครู'] }, 'เพิ่มครูเรียบร้อย');
     });
   });
+}
+
+/** วันเวรของครูคนนี้ในตารางเวรของภาคเรียนปัจจุบัน (ใช้เตือนเมื่อไม่ตรงกับทะเบียน) */
+function currentTermDutyDay_(teacherId) {
+  const term = currentTerm_();
+  const found = readTable_(SHEETS.DUTY).rows.filter(function (r) {
+    return str_(r['รหัสครู']) === str_(teacherId)
+      && str_(r['ปีการศึกษา']) === term.year && str_(r['ภาคเรียน']) === term.semester;
+  });
+  return found.length ? str_(found[0]['เวรประจำวัน']) : '';
+}
+
+/** เปลี่ยนวันเวรของภาคเรียนปัจจุบันให้ตรงกับค่าเริ่มต้นในทะเบียนครู */
+function applyDefaultDayToTerm_(teacherId, day) {
+  const term = currentTerm_();
+  const updates = [];
+  readTable_(SHEETS.DUTY).rows.forEach(function (r) {
+    if (str_(r['รหัสครู']) !== str_(teacherId)) return;
+    if (str_(r['ปีการศึกษา']) !== term.year || str_(r['ภาคเรียน']) !== term.semester) return;
+    if (str_(r['เวรประจำวัน']) === str_(day)) return;
+    updates.push({ row: r._row, patch: { 'เวรประจำวัน': str_(day), 'วันที่บันทึก': new Date() } });
+  });
+  if (updates.length) {
+    updateRecords_(SHEETS.DUTY, updates);
+    invalidateTable_(SHEETS.DUTY);
+  }
+  return updates.length;
+}
+
+/** ปิด/เปิดใช้งานแถวเวรของภาคเรียนปัจจุบันให้ตรงกับสถานะของครู */
+function syncTeacherStatusToDuty_(teacherId, status) {
+  const term = currentTerm_();
+  const updates = [];
+  readTable_(SHEETS.DUTY).rows.forEach(function (r) {
+    if (str_(r['รหัสครู']) !== str_(teacherId)) return;
+    if (str_(r['ปีการศึกษา']) !== term.year || str_(r['ภาคเรียน']) !== term.semester) return;
+    if ((str_(r['สถานะ']) || STATUS.ACTIVE) === status) return;
+    updates.push({ row: r._row, patch: { 'สถานะ': status } });
+  });
+  if (updates.length) {
+    updateRecords_(SHEETS.DUTY, updates);
+    invalidateTable_(SHEETS.DUTY);
+  }
+  return updates.length;
+}
+
+/** ลบแถวเวรทุกภาคเรียนของครูคนที่ถูกลบออกจากทะเบียน */
+function removeDutyOfTeacher_(teacherId, teacherName) {
+  const rows = readTable_(SHEETS.DUTY).rows.filter(function (r) {
+    const id = str_(r['รหัสครู']);
+    return id ? id === str_(teacherId) : str_(r['ชื่อ-นามสกุล']) === str_(teacherName);
+  }).map(function (r) { return r._row; });
+  if (!rows.length) return 0;
+  deleteRecords_(SHEETS.DUTY, rows);
+  invalidateTable_(SHEETS.DUTY);
+  return rows.length;
 }
 
 /** อัปเดตชื่อครูในผลการประเมินและตารางเวร ให้ตรงกันทั้งระบบ */
@@ -182,9 +258,13 @@ function apiDeleteTeacher(token, teacherId) {
       if (!target) return fail_('ไม่พบข้อมูลครู');
 
       const name = str_(target['ชื่อ-นามสกุล']);
+      // ลบแถวเวรทุกภาคเรียนไปพร้อมกัน ไม่ให้เหลือข้อมูลค้างในตารางเวร
+      const dutyRemoved = removeDutyOfTeacher_(str_(teacherId), name);
       deleteRecord_(SHEETS.TEACHERS, target._row);
-      logAction_('Admin', 'admin', 'ลบครู', name);
-      return ok_(null, 'ลบข้อมูลครูเรียบร้อย');
+      logAction_('Admin', 'admin', 'ลบครู', name +
+        (dutyRemoved ? ' | ลบแถวเวร ' + dutyRemoved + ' รายการ' : ''));
+      return ok_({ dutyRemoved: dutyRemoved }, 'ลบข้อมูลครูเรียบร้อย' +
+        (dutyRemoved ? ' พร้อมลบแถวเวร ' + dutyRemoved + ' รายการ' : ''));
     });
   });
 }
@@ -775,6 +855,7 @@ function apiListDuty(token, year, semester) {
         return p !== 0 ? p : a.teacherName.localeCompare(b.teacherName, 'th');
       }),
       countByDay: byDay,
+      consistency: dutyConsistency_(y, s),
       unassigned: teachers.filter(function (t) { return !assignedIds[t.id]; })
         .map(function (t) { return { id: t.id, name: t.name, level: t.level, defaultDay: t.defaultDay }; })
     });
@@ -866,6 +947,132 @@ function apiSaveDuty(token, data) {
       appendRecord_(SHEETS.DUTY, record);
       logAction_('Admin', 'admin', 'เพิ่มตารางเวร', teacher.name + ' | ' + termLabel_(year, semester) + ' | ' + record['เวรประจำวัน']);
       return ok_(null, 'เพิ่มรายการเวรเรียบร้อย');
+    });
+  });
+}
+
+/**
+ * ตรวจความสอดคล้องระหว่างทะเบียนครูกับตารางเวรของภาคเรียนที่เลือก
+ * แยกเป็น "ต้องแก้" (ชื่อ/รหัส/ครูที่ถูกลบ) กับ "แจ้งให้ทราบ" (วันเวรต่างจากค่าเริ่มต้นโดยตั้งใจ)
+ */
+function apiDutyConsistency(token, year, semester) {
+  return guard_(function () {
+    requireAdmin_(token);
+    const term = currentTerm_();
+    const y = str_(year) || term.year;
+    const s = str_(semester) || term.semester;
+    const report = dutyConsistency_(y, s);
+    return ok_({
+      year: y, semester: s, label: termLabel_(y, s),
+      years: academicYears_(), semesters: semesterList_(),
+      issues: report.issues,
+      counts: report.counts,
+      total: report.total,
+      errors: report.errors,
+      warnings: report.warnings,
+      fixable: report.fixable
+    });
+  });
+}
+
+/** คำอธิบายของปัญหาแต่ละชนิด ใช้ทั้งในหน้าจอและในบันทึกประวัติ */
+const DUTY_ISSUE_LABELS_ = {
+  orphan: 'แถวเวรของครูที่ไม่มีในทะเบียนแล้ว',
+  missingId: 'แถวเวรที่ยังไม่ได้ผูกรหัสครู',
+  name: 'ชื่อในตารางเวรไม่ตรงกับทะเบียน',
+  inactive: 'ครูปิดใช้งานแล้วแต่แถวเวรยังใช้งานอยู่',
+  duplicate: 'แถวเวรซ้ำในภาคเรียนเดียวกัน',
+  dayDiff: 'วันเวรต่างจากค่าเริ่มต้นในทะเบียน',
+  noDuty: 'ครูที่ยังไม่มีเวรในภาคเรียนนี้'
+};
+
+/**
+ * ซ่อมความไม่สอดคล้องตามชนิดที่เลือก
+ * @param {Object} options {year, semester, types: ['orphan','name',...]}
+ */
+function apiFixDutyConsistency(token, options) {
+  return guard_(function () {
+    const session = requireAdmin_(token);
+    const o = options || {};
+    const term = currentTerm_();
+    const y = str_(o.year) || term.year;
+    const s = str_(o.semester) || term.semester;
+    const types = (o.types || []).map(String).filter(function (t) { return !!DUTY_ISSUE_LABELS_[t]; });
+    if (!types.length) return fail_('กรุณาเลือกรายการที่ต้องการซ่อมอย่างน้อย 1 ชนิด');
+
+    return withLock_(function () {
+      const report = dutyConsistency_(y, s);
+      const todo = report.issues.filter(function (i) {
+        return i.fixable && types.indexOf(i.type) !== -1;
+      });
+      if (!todo.length) return fail_('ไม่พบรายการที่ต้องซ่อมตามเงื่อนไขที่เลือก');
+
+      const index = buildTeacherIndex_();
+      const table = readTable_(SHEETS.DUTY);
+      const byDutyId = {};
+      table.rows.forEach(function (r) { byDutyId[str_(r['รหัสรายการ'])] = r; });
+
+      const updates = [];
+      const deleteRows = [];
+      const newRows = [];
+      const codes = table.rows.map(function (r) { return str_(r['รหัสรายการ']); });
+      const done = {};
+      const bump = function (type) { done[type] = (done[type] || 0) + 1; };
+
+      todo.forEach(function (issue) {
+        if (issue.type === 'noDuty') {
+          const master = index.byId[issue.teacherId];
+          if (!master || !issue.day) return;
+          const code = nextCode_('DUT', codes);
+          codes.push(code);
+          newRows.push({
+            'รหัสรายการ': code, 'ปีการศึกษา': y, 'ภาคเรียน': s,
+            'รหัสครู': master.id, 'ชื่อ-นามสกุล': master.name,
+            'เวรประจำวัน': issue.day, 'บทบาทในเวร': 'กรรมการเวร',
+            'จุดปฏิบัติหน้าที่': '', 'เวลาเริ่ม': '', 'เวลาสิ้นสุด': '',
+            'ระดับชั้นที่ดูแล': master.level, 'หมายเหตุ': 'สร้างจากการซ่อมความสอดคล้องของข้อมูล',
+            'สถานะ': STATUS.ACTIVE, 'ผู้บันทึก': session.name || 'Admin', 'วันที่บันทึก': new Date()
+          });
+          bump(issue.type);
+          return;
+        }
+
+        const row = byDutyId[issue.dutyId];
+        if (!row) return;
+
+        if (issue.type === 'orphan') {
+          if (deleteRows.indexOf(row._row) === -1) deleteRows.push(row._row);
+          bump(issue.type);
+        } else if (issue.type === 'missingId') {
+          updates.push({ row: row._row, patch: { 'รหัสครู': issue.teacherId } });
+          bump(issue.type);
+        } else if (issue.type === 'name') {
+          updates.push({ row: row._row, patch: { 'ชื่อ-นามสกุล': issue.expected } });
+          bump(issue.type);
+        } else if (issue.type === 'inactive') {
+          updates.push({ row: row._row, patch: { 'สถานะ': STATUS.INACTIVE } });
+          bump(issue.type);
+        } else if (issue.type === 'dayDiff') {
+          updates.push({ row: row._row, patch: { 'เวรประจำวัน': issue.expected, 'วันที่บันทึก': new Date() } });
+          bump(issue.type);
+        }
+      });
+
+      if (updates.length) updateRecords_(SHEETS.DUTY, updates);
+      if (newRows.length) appendRecords_(SHEETS.DUTY, newRows);
+      if (deleteRows.length) deleteRecords_(SHEETS.DUTY, deleteRows);
+      invalidateTable_(SHEETS.DUTY);
+
+      const summary = Object.keys(done).map(function (t) {
+        return DUTY_ISSUE_LABELS_[t] + ' ' + done[t] + ' รายการ';
+      }).join(' · ');
+      const total = Object.keys(done).reduce(function (a, t) { return a + done[t]; }, 0);
+
+      logAction_('Admin', 'admin', 'ซ่อมความสอดคล้องตารางเวร',
+        termLabel_(y, s) + ' | ' + (summary || 'ไม่มีรายการ'));
+      return ok_({ fixed: total, detail: done, remaining: dutyConsistency_(y, s) },
+        total ? 'ซ่อมข้อมูลเรียบร้อย ' + total + ' รายการ (' + summary + ')'
+              : 'ไม่มีรายการที่ต้องซ่อม');
     });
   });
 }

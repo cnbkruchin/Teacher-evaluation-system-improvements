@@ -852,6 +852,140 @@ function dutyOfTeacher_(teacher, roster) {
   };
 }
 
+/**
+ * ตรวจความสอดคล้องระหว่าง "ทะเบียนครู" กับ "ตารางเวรรายภาคเรียน"
+ *
+ * หลักการของระบบ
+ *   • ทะเบียนครู  = แหล่งข้อมูลหลักของ ชื่อ · ระดับชั้นที่ปรึกษา · สถานะ
+ *   • ตารางเวร    = แหล่งข้อมูลหลักของ "เวรของภาคเรียนนั้น" (วัน บทบาท จุดปฏิบัติ เวลา)
+ *     ซึ่งตั้งใจให้แยกอิสระจากค่าเริ่มต้นในทะเบียนครูได้
+ *
+ * ฟังก์ชันนี้จึงแยก "ข้อมูลที่ต้องตรงกันเสมอ" (ต้องซ่อม) ออกจาก
+ * "ข้อมูลที่ต่างกันได้โดยตั้งใจ" (แค่แจ้งให้ทราบ)
+ *
+ * @return {{issues: Array, counts: Object, total: number, fixable: number}}
+ */
+function dutyConsistency_(year, semester) {
+  const y = String(year), s = String(semester);
+  const index = buildTeacherIndex_();
+  const issues = [];
+
+  let rows = [];
+  try {
+    rows = readTable_(SHEETS.DUTY).rows.filter(function (r) {
+      return str_(r['ปีการศึกษา']) === y && str_(r['ภาคเรียน']) === s;
+    });
+  } catch (e) { rows = []; }
+
+  const seenTeacher = {};
+  rows.forEach(function (r) {
+    const dutyId = str_(r['รหัสรายการ']);
+    const teacherId = str_(r['รหัสครู']);
+    const dutyName = str_(r['ชื่อ-นามสกุล']);
+    const master = teacherId ? index.byId[teacherId] : index.byName[dutyName];
+
+    // 1) แถวเวรที่ไม่มีครูคนนี้ในทะเบียนแล้ว
+    if (!master) {
+      issues.push({
+        type: 'orphan', severity: 'error', fixable: true,
+        dutyId: dutyId, teacherId: teacherId, dutyName: dutyName,
+        day: str_(r['เวรประจำวัน']),
+        message: 'ไม่พบครูคนนี้ในทะเบียนครูแล้ว',
+        fixLabel: 'ลบแถวเวรนี้ทิ้ง'
+      });
+      return;
+    }
+
+    // 2) แถวเวรที่ไม่ได้ผูกรหัสครู (จับคู่ด้วยชื่ออย่างเดียว จะพังทันทีที่เปลี่ยนชื่อ)
+    if (!teacherId) {
+      issues.push({
+        type: 'missingId', severity: 'error', fixable: true,
+        dutyId: dutyId, teacherId: master.id, dutyName: dutyName,
+        day: str_(r['เวรประจำวัน']),
+        message: 'แถวนี้ยังไม่ได้ผูกรหัสครู',
+        fixLabel: 'ผูกรหัส ' + master.id + ' ให้'
+      });
+    }
+
+    // 3) ชื่อในตารางเวรไม่ตรงกับทะเบียนครู
+    if (dutyName !== master.name) {
+      issues.push({
+        type: 'name', severity: 'error', fixable: true,
+        dutyId: dutyId, teacherId: master.id, dutyName: dutyName,
+        expected: master.name, day: str_(r['เวรประจำวัน']),
+        message: 'ชื่อไม่ตรงกับทะเบียนครู (ทะเบียนว่า "' + master.name + '")',
+        fixLabel: 'แก้ชื่อให้ตรงทะเบียน'
+      });
+    }
+
+    // 4) ครูที่ปิดใช้งานแล้วแต่แถวเวรยังใช้งานอยู่
+    if (master.status === STATUS.INACTIVE && str_(r['สถานะ']) !== STATUS.INACTIVE) {
+      issues.push({
+        type: 'inactive', severity: 'warn', fixable: true,
+        dutyId: dutyId, teacherId: master.id, dutyName: master.name,
+        day: str_(r['เวรประจำวัน']),
+        message: 'ครูถูกปิดใช้งานแล้ว แต่แถวเวรยังใช้งานอยู่',
+        fixLabel: 'ปิดใช้งานแถวเวรนี้'
+      });
+    }
+
+    // 5) ครูคนเดียวกันมีเวรซ้ำหลายแถวในภาคเรียนเดียวกัน
+    const key = master.id || dutyName;
+    if (seenTeacher[key]) {
+      issues.push({
+        type: 'duplicate', severity: 'error', fixable: false,
+        dutyId: dutyId, teacherId: master.id, dutyName: master.name,
+        day: str_(r['เวรประจำวัน']),
+        message: 'ครูคนนี้มีแถวเวรซ้ำในภาคเรียนนี้ (' + seenTeacher[key] + ' และ ' + dutyId + ')',
+        fixLabel: ''
+      });
+    } else {
+      seenTeacher[key] = dutyId;
+    }
+
+    // 6) วันเวรต่างจากค่าเริ่มต้นในทะเบียนครู — ต่างกันได้โดยตั้งใจ จึงแจ้งให้ทราบเฉยๆ
+    const defaultDay = str_(master.defaultDay);
+    const dutyDay = str_(r['เวรประจำวัน']);
+    if (defaultDay && dutyDay && defaultDay !== dutyDay) {
+      issues.push({
+        type: 'dayDiff', severity: 'info', fixable: true,
+        dutyId: dutyId, teacherId: master.id, dutyName: master.name,
+        day: dutyDay, expected: defaultDay,
+        message: 'ภาคเรียนนี้อยู่เวรวัน' + dutyDay + ' ต่างจากค่าเริ่มต้นในทะเบียน (วัน' + defaultDay + ')',
+        fixLabel: 'เปลี่ยนเป็นวัน' + defaultDay + ' ตามทะเบียน'
+      });
+    }
+  });
+
+  // 7) ครูที่ใช้งานอยู่แต่ยังไม่มีเวรในภาคเรียนนี้
+  index.list.forEach(function (r) {
+    const id = str_(r['รหัสครู']);
+    const name = str_(r['ชื่อ-นามสกุล']);
+    if (!name || str_(r['สถานะ']) === STATUS.INACTIVE) return;
+    if (seenTeacher[id] || seenTeacher[name]) return;
+    issues.push({
+      type: 'noDuty', severity: 'warn', fixable: true,
+      dutyId: '', teacherId: id, dutyName: name,
+      day: str_(r['เวรประจำวัน (ค่าเริ่มต้น)']),
+      message: 'ยังไม่มีเวรในภาคเรียนนี้',
+      fixLabel: str_(r['เวรประจำวัน (ค่าเริ่มต้น)'])
+        ? 'สร้างเวรวัน' + str_(r['เวรประจำวัน (ค่าเริ่มต้น)']) + ' ให้' : ''
+    });
+  });
+
+  const counts = {};
+  issues.forEach(function (i) { counts[i.type] = (counts[i.type] || 0) + 1; });
+
+  return {
+    issues: issues,
+    counts: counts,
+    total: issues.length,
+    errors: issues.filter(function (i) { return i.severity === 'error'; }).length,
+    warnings: issues.filter(function (i) { return i.severity === 'warn'; }).length,
+    fixable: issues.filter(function (i) { return i.fixable; }).length
+  };
+}
+
 /** รายชื่อครูที่ยังใช้งานอยู่ พร้อมข้อมูลเวรของภาคเรียนที่เลือก */
 function teachersWithDuty_(year, semester, includeInactive) {
   const index = buildTeacherIndex_();

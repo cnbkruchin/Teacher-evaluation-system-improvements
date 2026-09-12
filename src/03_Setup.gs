@@ -656,6 +656,8 @@ function seedDutyRosterFromTeachers_(year, semester) {
   const codes = readTable_(SHEETS.DUTY).rows.map(function (r) { return str_(r['รหัสรายการ']); });
   const rows = [];
   teachers.forEach(function (t) {
+    // ข้ามครูที่ปิดใช้งานแล้ว ไม่ให้ตารางเวรมีคนที่ไม่ได้ปฏิบัติงานติดมาด้วย
+    if (str_(t['สถานะ']) === STATUS.INACTIVE) return;
     const day = str_(t['เวรประจำวัน (ค่าเริ่มต้น)']) || str_(t['เวรประจำวัน']);
     if (!day) return;
     const code = nextCode_('DUT', codes);

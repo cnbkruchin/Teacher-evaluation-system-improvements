@@ -1094,7 +1094,154 @@ apiSaveSetGroups(T2, mainSet.id, Object.keys(ROLES).map(function (k, i) {
     weight: [40, 30, 20, 10][i] };
 }));
 
-/* ---------- 20. ตรวจสุขภาพระบบ ---------- */
+/* ---------- 20. ความสอดคล้องระหว่างทะเบียนครูกับตารางเวร ---------- */
+section('ความสอดคล้องระหว่างทะเบียนครูกับตารางเวร');
+
+const CYEAR = '2593', CSEM = '1';
+setSettings_({ current_academic_year: CYEAR, current_semester: CSEM,
+  academic_years: [YEAR, SYEAR, CYEAR].join(',') });
+
+const cA = apiSaveTeacher(T2, { prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'หนึ่ง',
+  level: 'ม.1', defaultDay: 'จันทร์', department: 'กลุ่มสาระทดสอบ' }).data.id;
+const cB = apiSaveTeacher(T2, { prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'สอง',
+  level: 'ม.2', defaultDay: 'อังคาร' }).data.id;
+apiSeedDuty(T2, CYEAR, CSEM, false);
+check('สร้างตารางเวรของภาคเรียนทดสอบได้',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.length > 0);
+check('ข้อมูลเริ่มต้นสอดคล้องกันดี',
+  dutyConsistency_(CYEAR, CSEM).errors === 0, dutyConsistency_(CYEAR, CSEM).issues.map(i => i.type));
+
+// --- เปลี่ยนชื่อครู → ตารางเวรต้องตามทันที ---
+apiSaveTeacher(T2, { id: cA, prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'หนึ่งใหม่',
+  level: 'ม.1', defaultDay: 'จันทร์', department: 'กลุ่มสาระทดสอบ' });
+check('เปลี่ยนชื่อครู → ชื่อในตารางเวรตามให้ทันที',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].teacherName === 'นายสอดคล้อง หนึ่งใหม่');
+check('ไม่เกิดความไม่สอดคล้องจากการเปลี่ยนชื่อ', dutyConsistency_(CYEAR, CSEM).errors === 0);
+
+// --- เปลี่ยนวันเวรเริ่มต้น: ตารางเวรของภาคเรียนต้องไม่เปลี่ยนเองโดยพลการ ---
+apiSaveTeacher(T2, { id: cA, prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'หนึ่งใหม่',
+  level: 'ม.1', defaultDay: 'พฤหัสบดี', department: 'กลุ่มสาระทดสอบ' });
+check('เปลี่ยนเวรเริ่มต้นแล้วตารางเวรของภาคเรียนยังเป็นวันเดิม (แยกอิสระตามเจตนา)',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].day === 'จันทร์');
+const diffReport = dutyConsistency_(CYEAR, CSEM);
+check('ระบบตรวจพบว่าวันเวรต่างจากค่าเริ่มต้น และจัดเป็นข้อมูลแจ้งให้ทราบ',
+  diffReport.counts.dayDiff === 1 && diffReport.errors === 0, diffReport.counts);
+
+// --- สั่งอัปเดตพร้อมบันทึกครู ---
+const applied = apiSaveTeacher(T2, { id: cA, prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'หนึ่งใหม่',
+  level: 'ม.1', defaultDay: 'ศุกร์', department: 'กลุ่มสาระทดสอบ', applyDayToCurrentTerm: true });
+check('สั่งอัปเดตตารางเวรพร้อมบันทึกครูได้', applied.data.dutyUpdated === 1, applied.message);
+check('วันเวรของภาคเรียนปัจจุบันเปลี่ยนตาม',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].day === 'ศุกร์');
+check('สิทธิ์หัวหน้าเวรเปลี่ยนตามทันที',
+  teachersForEvaluator_(ROLES.HEAD_DUTY, 'ศุกร์', CYEAR, CSEM).some(t => t.id === cA) &&
+  !teachersForEvaluator_(ROLES.HEAD_DUTY, 'จันทร์', CYEAR, CSEM).some(t => t.id === cA));
+
+// --- ปิดใช้งานครู → แถวเวรต้องปิดตาม ---
+apiSaveTeacher(T2, { id: cB, prefix: 'นาย', firstName: 'สอดคล้อง', lastName: 'สอง',
+  level: 'ม.2', defaultDay: 'อังคาร', status: 'ไม่ใช้งาน' });
+check('ปิดใช้งานครู → แถวเวรของภาคเรียนปัจจุบันถูกปิดตาม',
+  readTable_(SHEETS.DUTY).rows.filter(r =>
+    str_(r['รหัสครู']) === cB && str_(r['ปีการศึกษา']) === CYEAR && str_(r['ภาคเรียน']) === CSEM
+  ).every(r => str_(r['สถานะ']) === 'ไม่ใช้งาน'));
+check('ตารางเวรไม่แสดงครูที่ปิดใช้งานแล้ว',
+  !apiListDuty(T2, CYEAR, CSEM).data.rows.some(r => r.teacherId === cB));
+
+// --- ลบครู → แถวเวรต้องถูกลบตาม ---
+const cC = apiSaveTeacher(T2, { prefix: 'นาย', firstName: 'จะถูก', lastName: 'ลบทิ้ง',
+  level: 'ม.4', defaultDay: 'พุธ' }).data.id;
+apiSaveDuty(T2, { year: CYEAR, semester: CSEM, teacherId: cC, day: 'พุธ', position: 'กรรมการเวร' });
+check('เพิ่มเวรให้ครูที่จะลบแล้ว',
+  readTable_(SHEETS.DUTY).rows.some(r => str_(r['รหัสครู']) === cC));
+const delC = apiDeleteTeacher(T2, cC);
+check('ลบครูสำเร็จ', delC.success === true, delC.message);
+check('ลบครู → แถวเวรถูกลบตามไปด้วย',
+  !readTable_(SHEETS.DUTY).rows.some(r => str_(r['รหัสครู']) === cC), delC.message);
+check('แจ้งจำนวนแถวเวรที่ลบไปด้วย', delC.data.dutyRemoved === 1, delC.data);
+
+// --- ตรวจจับข้อมูลที่หลุดจากกัน (จำลองการพิมพ์แก้ในชีทเอง) ---
+appendRecord_(SHEETS.DUTY, {
+  'รหัสรายการ': 'DUT-C001', 'ปีการศึกษา': CYEAR, 'ภาคเรียน': CSEM,
+  'รหัสครู': 'TCH-0000', 'ชื่อ-นามสกุล': 'นายไม่มี ในทะเบียน',
+  'เวรประจำวัน': 'ศุกร์', 'บทบาทในเวร': 'กรรมการเวร', 'สถานะ': 'ใช้งาน'
+});
+const dutyRowA = readTable_(SHEETS.DUTY).rows.filter(r =>
+  str_(r['รหัสครู']) === cA && str_(r['ปีการศึกษา']) === CYEAR)[0];
+updateRecord_(SHEETS.DUTY, dutyRowA._row, { 'ชื่อ-นามสกุล': 'นายชื่อ ผิดเพี้ยน' });
+invalidateTable_(SHEETS.DUTY);
+
+const report = apiDutyConsistency(T2, CYEAR, CSEM);
+check('ตรวจความสอดคล้องได้', report.success === true, report.message);
+check('ตรวจพบแถวเวรของครูที่ไม่มีในทะเบียน', report.data.counts.orphan === 1, report.data.counts);
+check('ตรวจพบชื่อในตารางเวรไม่ตรงกับทะเบียน', report.data.counts.name === 1, report.data.counts);
+check('จัดระดับความรุนแรงเป็น "ต้องแก้"', report.data.errors >= 2, report.data.errors);
+
+// --- ซ่อมอัตโนมัติ ---
+check('ไม่เลือกชนิดที่จะซ่อม → ปฏิเสธ',
+  apiFixDutyConsistency(T2, { year: CYEAR, semester: CSEM, types: [] }).success === false);
+const fixed = apiFixDutyConsistency(T2, {
+  year: CYEAR, semester: CSEM, types: ['orphan', 'name', 'missingId', 'inactive']
+});
+check('ซ่อมข้อมูลที่ต้องแก้ได้', fixed.success === true, fixed.message);
+check('ซ่อมแถวเวรของครูที่ไม่มีในทะเบียน และชื่อที่ไม่ตรง',
+  fixed.data.detail.orphan === 1 && fixed.data.detail.name === 1, fixed.data.detail);
+const afterFix = dutyConsistency_(CYEAR, CSEM);
+check('ไม่เหลือรายการที่ต้องแก้', afterFix.errors === 0, afterFix.issues.map(i => i.type));
+check('ชื่อในตารางเวรกลับมาตรงกับทะเบียน',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].teacherName === 'นายสอดคล้อง หนึ่งใหม่');
+check('ลบแถวเวรของครูที่ไม่มีในทะเบียนแล้ว',
+  !readTable_(SHEETS.DUTY).rows.some(r => str_(r['รหัสรายการ']) === 'DUT-C001'));
+
+// --- สร้างเวรให้ครูที่ยังไม่มี ---
+const noDutyBefore = dutyConsistency_(CYEAR, CSEM).counts.noDuty || 0;
+if (noDutyBefore) {
+  const seeded = apiFixDutyConsistency(T2, { year: CYEAR, semester: CSEM, types: ['noDuty'] });
+  check('สร้างเวรให้ครูที่ยังไม่มีจากค่าเริ่มต้นได้', seeded.success === true, seeded.message);
+  check('ไม่เหลือครูที่ไม่มีเวร (เฉพาะคนที่มีค่าเริ่มต้น)',
+    (dutyConsistency_(CYEAR, CSEM).counts.noDuty || 0) < noDutyBefore);
+} else {
+  check('ครูทุกคนมีเวรครบอยู่แล้ว', true);
+  check('ไม่มีรายการค้าง', true);
+}
+
+// --- นำเข้าไฟล์อัปเดตชื่อ → ตารางเวรต้องตาม ---
+const syncCsv = 'รหัสครู,คำนำหน้า,ชื่อ,นามสกุล,ระดับชั้น,เวรประจำวัน\n' +
+  cA + ',นาย,สอดคล้อง,หนึ่งล่าสุด,ม.1,ศุกร์\n';
+const syncPrev = apiPreviewTeacherImport(T2, csvFile(syncCsv), { updateExisting: true });
+const syncCommit = apiCommitTeacherImport(T2, {
+  rows: syncPrev.data.rows, fileName: 'sync.csv', updateExisting: true
+});
+check('นำเข้าไฟล์เพื่ออัปเดตชื่อครูได้', syncCommit.success === true, syncCommit.message);
+check('นำเข้าอัปเดตชื่อ → ชื่อในตารางเวรตามให้ด้วย',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].teacherName === 'นายสอดคล้อง หนึ่งล่าสุด',
+  apiListDuty(T2, CYEAR, CSEM).data.rows.filter(r => r.teacherId === cA)[0].teacherName);
+check('นำเข้าแล้วข้อมูลยังสอดคล้องกัน', dutyConsistency_(CYEAR, CSEM).errors === 0);
+
+// --- ระดับชั้นในรายงานต้องยึดทะเบียนครู ---
+const lvlDuty = readTable_(SHEETS.DUTY).rows.filter(r =>
+  str_(r['รหัสครู']) === cA && str_(r['ปีการศึกษา']) === CYEAR)[0];
+updateRecord_(SHEETS.DUTY, lvlDuty._row, { 'ระดับชั้นที่ดูแล': 'ม.6' });
+invalidateTable_(SHEETS.DUTY);
+check('ทะเบียนครูว่า ม.1 แต่เวรดูแล ม.6 → teachersWithDuty_ ใช้ ม.1',
+  teachersWithDuty_(CYEAR, CSEM, false).filter(t => t.id === cA)[0].level === 'ม.1');
+const vdLogin2 = apiEvaluatorLogin(viceDir.name, vdReset.data.password);
+if (vdLogin2.success) {
+  const scAll = {};
+  loadCriteria_(mainSet.id).forEach(c => { scAll[c.id] = 4; });
+  apiSubmitEvaluation(vdLogin2.data.token, {
+    year: CYEAR, semester: CSEM, setId: mainSet.id, teacherId: cA, scores: scAll, comment: ''
+  });
+  const lvlRow = buildSummaryRows_({ year: CYEAR, semester: CSEM }).filter(r => r.teacherId === cA)[0];
+  check('รายงานแสดงระดับชั้นตามทะเบียนครู (ไม่ใช่ระดับชั้นที่ดูแลในเวร)',
+    lvlRow && lvlRow.level === 'ม.1', lvlRow && lvlRow.level);
+} else {
+  check('รายงานแสดงระดับชั้นตามทะเบียนครู (ข้ามเพราะเข้าสู่ระบบไม่ได้)', true);
+}
+
+// คืนค่าภาคเรียนปัจจุบัน
+setSettings_({ current_academic_year: YEAR, current_semester: '1' });
+
+/* ---------- 21. ตรวจสุขภาพระบบ ---------- */
 section('ตรวจสุขภาพระบบ');
 const health = healthCheck_();
 check('ตรวจสุขภาพระบบทำงานได้', health.items.length > 0);

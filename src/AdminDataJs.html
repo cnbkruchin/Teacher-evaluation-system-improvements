@@ -68,15 +68,24 @@ Admin.editTeacher = function (id) {
         '<div class="field"><label>ระดับชั้นที่ปรึกษา</label><select id="fLevel">' +
           '<option value="">-- ไม่ระบุ --</option>' + optionsHtml(LEVEL_LIST, t ? t.level : '') + '</select></div>' +
         '<div class="field"><label>ห้องที่ปรึกษา</label><input type="text" id="fRoom" value="' + esc(t ? t.room : '') + '" placeholder="เช่น 1/3"></div>' +
-        '<div class="field"><label>เวรประจำวัน (ค่าเริ่มต้น)</label><select id="fDay">' +
+        '<div class="field"><label>เวรประจำวัน (ค่าเริ่มต้น)</label><select id="fDay" onchange="Admin.onTeacherDayChange()">' +
           '<option value="">-- ไม่ระบุ --</option>' + optionsHtml(DAY_LIST, t ? t.defaultDay : '') + '</select>' +
           '<div class="hint">ใช้เมื่อยังไม่มีตารางเวรของภาคเรียนนั้น</div></div>' +
         '<div class="field"><label>อีเมล</label><input type="email" id="fEmail" value="' + esc(t ? t.email : '') + '"></div>' +
         '<div class="field"><label>สถานะ</label><select id="fStatus">' +
           optionsHtml(['ใช้งาน', 'ไม่ใช้งาน'], t ? t.status : 'ใช้งาน') + '</select></div>' +
-      '</div>',
+      '</div>' +
+
+      (t ? '<div class="alert alert--warn hidden" id="fDayNotice"><span>📅</span><span>' +
+        'ท่านกำลังเปลี่ยนเวรประจำวัน (ค่าเริ่มต้น) — <b>ตารางเวรของภาคเรียนปัจจุบันจะยังเป็นวันเดิม</b> ' +
+        'เพราะระบบให้แต่ละภาคเรียนกำหนดเวรได้อิสระ' +
+        '<label class="checkbox" style="margin-top:8px"><input type="checkbox" id="fApplyDay" checked>' +
+        '<span>อัปเดตตารางเวรของภาคเรียนปัจจุบันให้ตรงกันด้วย ' +
+        '<span class="small muted">(มีผลต่อสิทธิ์ของหัวหน้าเวรประจำวันทันที)</span></span></label>' +
+        '</span></div>' : ''),
     footer: '<button class="btn btn--ghost" data-close>ยกเลิก</button><button class="btn" id="btnSaveTeacher">💾 บันทึก</button>',
     onOpen: function (wrap, close) {
+      Admin.editingTeacherDay = t ? (t.defaultDay || '') : '';
       wrap.querySelector('#btnSaveTeacher').onclick = async function () {
         try {
           await apiWithButton(this, 'apiSaveTeacher', App.session.token, {
@@ -89,7 +98,10 @@ Admin.editTeacher = function (id) {
             room: wrap.querySelector('#fRoom').value.trim(),
             defaultDay: wrap.querySelector('#fDay').value,
             email: wrap.querySelector('#fEmail').value.trim(),
-            status: wrap.querySelector('#fStatus').value
+            status: wrap.querySelector('#fStatus').value,
+            applyDayToCurrentTerm: !!(wrap.querySelector('#fApplyDay') &&
+              wrap.querySelector('#fApplyDay').checked &&
+              !wrap.querySelector('#fDayNotice').classList.contains('hidden'))
           });
           close();
           toast('บันทึกข้อมูลครูเรียบร้อย', 'ok');
@@ -100,6 +112,14 @@ Admin.editTeacher = function (id) {
       };
     }
   });
+};
+
+/** เตือนเมื่อเปลี่ยนเวรเริ่มต้น เพราะตารางเวรของภาคเรียนแยกอิสระจากค่านี้ */
+Admin.onTeacherDayChange = function () {
+  const notice = document.getElementById('fDayNotice');
+  const select = document.getElementById('fDay');
+  if (!notice || !select) return;
+  notice.classList.toggle('hidden', select.value === Admin.editingTeacherDay);
 };
 
 /**
@@ -931,6 +951,8 @@ App.pages.duty = async function (container) {
 
     '<div class="grid grid-5" style="grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:18px">' + dayCards + '</div>' +
 
+    Admin.consistencyCard(data.consistency) +
+
     (data.unassigned.length ? '<div class="card"><div class="card__head">' +
       '<h3>⚠️ ครูที่ยังไม่มีเวรในภาคเรียนนี้ (' + data.unassigned.length + ' คน)</h3></div>' +
       '<div class="inline">' + data.unassigned.map(function (u) {
@@ -965,6 +987,7 @@ App.pages.duty = async function (container) {
     Admin.filters.duty = { year: $('dYear').value, semester: $('dSemester').value };
     App.go('duty');
   };
+  if ($('btnFixDuty')) $('btnFixDuty').onclick = function () { Admin.fixDuty(this); };
 };
 
 Admin.editDuty = function (dutyId, presetTeacherId) {
@@ -1051,6 +1074,84 @@ Admin.deleteDuty = async function (id, name) {
     const res = await rpc('apiDeleteDuty', App.session.token, id);
     if (!res.success) throw new Error(res.message);
     toast(res.message, 'ok');
+    App.go('duty');
+  } catch (err) { toast(err.message, 'danger'); }
+};
+
+/* ---------- ความสอดคล้องระหว่างทะเบียนครูกับตารางเวร ---------- */
+
+Admin.ISSUE_LABELS = {
+  orphan: 'แถวเวรของครูที่ไม่มีในทะเบียนแล้ว',
+  missingId: 'แถวเวรที่ยังไม่ได้ผูกรหัสครู',
+  name: 'ชื่อในตารางเวรไม่ตรงกับทะเบียน',
+  inactive: 'ครูปิดใช้งานแล้วแต่แถวเวรยังใช้งานอยู่',
+  duplicate: 'แถวเวรซ้ำในภาคเรียนเดียวกัน',
+  dayDiff: 'วันเวรต่างจากค่าเริ่มต้นในทะเบียน',
+  noDuty: 'ครูที่ยังไม่มีเวรในภาคเรียนนี้'
+};
+
+/** การ์ดสรุปผลตรวจความสอดคล้อง แสดงบนหน้าตารางเวร */
+Admin.consistencyCard = function (c) {
+  if (!c) return '';
+  if (!c.total) {
+    return '<div class="alert alert--ok"><span>🔗</span><span>' +
+      '<b>ข้อมูลตรงกันทั้งหมด</b> — ทะเบียนครูกับตารางเวรของภาคเรียนนี้สอดคล้องกันดี</span></div>';
+  }
+
+  const order = ['orphan', 'duplicate', 'name', 'missingId', 'inactive', 'noDuty', 'dayDiff'];
+  const rows = order.filter(function (k) { return c.counts[k]; }).map(function (k) {
+    const sample = c.issues.filter(function (i) { return i.type === k; });
+    const severity = sample[0].severity;
+    const tone = severity === 'error' ? 'badge--danger' : (severity === 'warn' ? 'badge--warn' : 'badge--muted');
+    return '<tr><td><label class="checkbox" style="padding:0">' +
+        '<input type="checkbox" class="fixType" value="' + esc(k) + '"' +
+        (sample[0].fixable ? (severity === 'error' ? ' checked' : '') : ' disabled') + '>' +
+        '<span><b>' + esc(Admin.ISSUE_LABELS[k] || k) + '</b>' +
+        (sample[0].fixable ? '' : '<div class="small muted">ต้องแก้ด้วยตนเอง</div>') + '</span></label></td>' +
+      '<td class="num"><span class="badge ' + tone + '">' + c.counts[k] + '</span></td>' +
+      '<td class="small muted">' + sample.slice(0, 3).map(function (i) {
+        return esc(i.dutyName) + (i.expected ? ' → ' + esc(i.expected) : '');
+      }).join(' · ') + (sample.length > 3 ? ' และอีก ' + (sample.length - 3) : '') + '</td></tr>';
+  }).join('');
+
+  return '<div class="card">' +
+    '<div class="card__head"><h3>🔗 ความสอดคล้องกับทะเบียนครู</h3><div class="spacer"></div>' +
+      (c.errors ? '<span class="badge badge--danger">ต้องแก้ ' + c.errors + '</span>' : '') +
+      (c.warnings ? '<span class="badge badge--warn">ควรตรวจ ' + c.warnings + '</span>' : '') +
+      '<button class="btn btn--soft btn--sm" id="btnFixDuty">🔧 ซ่อมรายการที่เลือก</button></div>' +
+    '<p class="card__desc">ทะเบียนครูเป็นแหล่งข้อมูลหลักของ <b>ชื่อ · ระดับชั้นที่ปรึกษา · สถานะ</b> ' +
+      'ส่วนตารางเวรเป็นแหล่งข้อมูลหลักของ <b>เวรในภาคเรียนนั้น</b> — ' +
+      'วันเวรจึงต่างจากค่าเริ่มต้นในทะเบียนได้โดยตั้งใจ (ระบบจะไม่แก้ให้เองถ้าไม่ได้ติ๊กเลือก)</p>' +
+    '<div class="table-wrap"><table><thead><tr>' +
+      '<th>รายการที่พบ</th><th class="num">จำนวน</th><th>ตัวอย่าง</th></tr></thead><tbody>' +
+      rows + '</tbody></table></div>' +
+  '</div>';
+};
+
+Admin.fixDuty = async function (button) {
+  const types = Array.prototype.slice.call(document.querySelectorAll('.fixType:checked'))
+    .map(function (x) { return x.value; });
+  if (!types.length) { toast('กรุณาเลือกรายการที่ต้องการซ่อมอย่างน้อย 1 รายการ', 'warn'); return; }
+
+  const data = Admin.cache.duty;
+  const dayDiff = types.indexOf('dayDiff') !== -1;
+  const yes = await confirmDialog({
+    title: '🔧 ซ่อมความสอดคล้องของข้อมูล',
+    message: 'ซ่อมข้อมูลของ ' + semesterLabel(data.semester) + '/' + data.year + ' จำนวน ' +
+      types.length + ' รายการที่เลือกใช่หรือไม่?',
+    warning: dayDiff
+      ? 'ท่านเลือก "วันเวรต่างจากค่าเริ่มต้นในทะเบียน" ด้วย — ระบบจะเปลี่ยนวันเวรของภาคเรียนนี้ให้ตรงกับทะเบียนครู ' +
+        'หากภาคเรียนนี้ตั้งใจให้ต่างจากค่าเริ่มต้น กรุณาเอาเครื่องหมายถูกออกก่อน'
+      : 'ระบบจะแก้เฉพาะตารางเวร ไม่แตะทะเบียนครูและผลการประเมิน',
+    confirmText: 'ซ่อมข้อมูล'
+  });
+  if (!yes) return;
+
+  try {
+    const res = await apiWithButton(button, 'apiFixDutyConsistency', App.session.token, {
+      year: data.year, semester: data.semester, types: types
+    });
+    toast(res && res.fixed ? 'ซ่อมข้อมูลเรียบร้อย ' + res.fixed + ' รายการ' : 'ไม่มีรายการที่ต้องซ่อม', 'ok', 7000);
     App.go('duty');
   } catch (err) { toast(err.message, 'danger'); }
 };
